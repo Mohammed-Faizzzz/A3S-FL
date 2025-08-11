@@ -1,6 +1,8 @@
 import tensorflow as tf
 from tensorflow import keras
 from keras import layers
+import os
+import random
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -39,6 +41,52 @@ for c in np.unique(y_train):
 # Convert to NumPy arrays
 client_data = [(x_train[idx], y_train[idx]) for idx in client_indices]
 
-# Example: size of each client's dataset
-print([len(c[0]) for c in client_data])
+# Save Client_Data
+client_data_dir = "client_data"
+os.makedirs(client_data_dir, exist_ok=True)
 
+for i, (x, y) in enumerate(client_data):
+    np.savez_compressed(os.path.join(client_data_dir, f"client_{i}.npz"), x=x, y=y)
+
+def create_data_description(client_data):
+    """
+    Generates a detailed description of a client's data split.
+
+    Args:
+        client_data (tuple): A tuple containing the (x, y) data for one client.
+
+    Returns:
+        dict: A dictionary with detailed data characteristics.
+    """
+    _, y_data = client_data
+
+    # Find the total number of samples
+    total_samples = len(y_data)
+
+    # Get unique classes and their counts
+    unique_classes, counts = np.unique(y_data, return_counts=True)
+    class_distribution = dict(zip(unique_classes.tolist(), counts.tolist()))
+
+    # Calculate class skewness
+    class_skew = np.std(counts)
+
+    return {
+        'total_samples': total_samples,
+        'unique_classes_count': len(unique_classes),
+        'class_distribution': class_distribution,
+        'class_skew_metric': class_skew,
+    }
+    
+all_client_descriptions = []
+
+for i, client_split in enumerate(client_data):
+    description = create_data_description(client_split)
+    description['client_id'] = i
+    all_client_descriptions.append(description)
+
+for desc in all_client_descriptions:
+    print(f"\n--- Client {desc['client_id']} Description ---")
+    print(f"Total Samples: {desc['total_samples']}")
+    print(f"Number of Unique Classes: {desc['unique_classes_count']}")
+    print(f"Class Skewness (Std Dev): {desc['class_skew_metric']:.2f}")
+    print("Class Distribution:", desc['class_distribution'])
