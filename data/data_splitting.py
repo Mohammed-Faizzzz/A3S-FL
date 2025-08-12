@@ -41,13 +41,6 @@ for c in np.unique(y_train):
 # Convert to NumPy arrays
 client_data = [(x_train[idx], y_train[idx]) for idx in client_indices]
 
-# Save Client_Data
-client_data_dir = "client_data"
-os.makedirs(client_data_dir, exist_ok=True)
-
-for i, (x, y) in enumerate(client_data):
-    np.savez_compressed(os.path.join(client_data_dir, f"client_{i}.npz"), x=x, y=y)
-
 def create_data_description(client_data):
     """
     Generates a detailed description of a client's data split.
