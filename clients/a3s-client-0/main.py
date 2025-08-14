@@ -23,9 +23,8 @@ private_key = os.getenv("PRIVATE_KEY")
 base_url = os.getenv("RESOURCE_SERVER_URL")
 endpoint_path = os.getenv("ENDPOINT_PATH")
 
-# if not all([private_key, base_url, endpoint_path]):
-#     print("Error: Missing required environment variables")
-#     exit(1)
+def log(*a, **kw):
+    print(*a, file=sys.stderr, flush=True, **kw)
 
 # --- Internal Data and Training Methods ---
 
@@ -92,7 +91,7 @@ def _train_model_locally(model_params: Dict[str, torch.Tensor], dataloader: Data
             loss.backward()
             optimizer.step()
     
-    print(f"Client {mcp.name} finished local training for {epochs} epochs.")
+    log(f"Client {mcp.name} finished local training for {epochs} epochs.")
     return model.state_dict()
 
 @mcp.tool()
@@ -127,9 +126,9 @@ async def train_model_with_local_data(global_model_params: str, epochs: int = 1)
             "num_samples": len(local_dataloader.dataset)
         }
     except FileNotFoundError as e:
-        print(f"Error: {e}")
+        log(f"Error: {e}")
         return {"error": str(e)}
 
 if __name__ == "__main__":
-    print(f"Starting MCP server for {mcp.name}...")
+    log(f"Starting MCP server for {mcp.name}...")
     mcp.run(transport='stdio')
