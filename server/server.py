@@ -5,6 +5,7 @@ import base64, io, torch
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 import os, sys
+import json
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path: sys.path.insert(0, ROOT)
@@ -14,10 +15,16 @@ from models.cnn_model import CNN
 
 # Hardcoded client configs
 CLIENTS = [
-    ("a3s-client-0", "clients/a3s-client-0/main.py")
-    # ("a3s-client-1", "clients/a3s-client-1/main.py"),
-    # ("a3s-client-2", "clients/a3s-client-2/main.py"),
-    # # add the rest...
+    ("a3s-client-0", "clients/a3s-client-0/main.py"),
+    ("a3s-client-1", "clients/a3s-client-1/main.py"),
+    ("a3s-client-2", "clients/a3s-client-2/main.py"),
+    ("a3s-client-3", "clients/a3s-client-3/main.py"),
+    ("a3s-client-4", "clients/a3s-client-4/main.py"),
+    ("a3s-client-5", "clients/a3s-client-5/main.py"),
+    ("a3s-client-6", "clients/a3s-client-6/main.py"),
+    ("a3s-client-7", "clients/a3s-client-7/main.py"),
+    ("a3s-client-8", "clients/a3s-client-8/main.py"),
+    ("a3s-client-9", "clients/a3s-client-9/main.py")
 ]
 
 UV_CMD = "uv"
@@ -66,10 +73,29 @@ class Orchestrator:
                 "train_model_with_local_data",
                 {"global_model_params": global_sd_b64, "epochs": epochs}
             )
-            payload = result.content[0].text if hasattr(result.content[0], "text") else result.content[0]
-            # Depending on MCP library, may need to parse JSON here:
+
+            # Ensure result is valid and has content
+            if not result or not getattr(result, "content", None):
+                print(f"[orchestrator] {name} error: no result content")
+                continue
+
+            payload = None
+            if hasattr(result.content[0], "text"):
+                payload = result.content[0].text
+            else:
+                payload = result.content[0]
+            # print(f"[orchestrator] {name} result: {payload}")
+
+            if not payload:  # empty string, None, etc.
+                print(f"[orchestrator] {name} error: empty payload")
+                continue
+
             import json
-            data = json.loads(payload) if isinstance(payload, str) else payload
+            try:
+                data = json.loads(payload) if isinstance(payload, str) else payload
+            except json.JSONDecodeError as e:
+                print(f"[orchestrator] {name} error decoding JSON: {e}")
+                continue
 
             if "error" in data:
                 print(f"[orchestrator] {name} error: {data['error']}")
