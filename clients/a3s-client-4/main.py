@@ -16,7 +16,7 @@ if ROOT not in sys.path: sys.path.insert(0, ROOT)
 
 # Import the base model architecture
 from models.cnn_model import CNN
-mcp = FastMCP("a3s-client-0")
+mcp = FastMCP("a3s-client-4")
 
 load_dotenv()
 private_key = os.getenv("PRIVATE_KEY")
@@ -102,14 +102,12 @@ async def train_model_with_local_data(global_model_params: str, epochs: int = 1)
     """
     Performs federated learning on a client with a non-IID subset of the
     CIFAR-100 dataset.
-    total_samples: 7926,
-    num_unique_classes: 20,
-    class_skewness_std_dev: 148.39,
+    total_samples: 4245,
+    num_unique_classes: 14,
+    class_skewness_std_dev: 221.57,
     class_distribution:
-    {0: 450, 1: 369, 3: 201, 4: 500, 6: 62, 7: 499, 10: 500,
-    23: 329, 32: 499, 34: 314, 35: 491, 36: 499, 38: 139, 47: 499,
-    62: 499, 70: 100, 73: 496, 91: 499, 94: 499, 97: 482}
-   
+    {0: 2, 13: 478, 15: 44, 19: 341, 21: 384, 25: 488,
+    28: 496, 40: 499, 54: 11, 71: 499, 76: 2, 78: 499, 82: 3, 99: 499}
     
     Args:
         global_model_params: A dictionary of the global model's parameters.
