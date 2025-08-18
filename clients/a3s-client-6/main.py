@@ -70,7 +70,7 @@ def _b64_to_state_dict(b64):
     import torch as _t
     return _t.load(buf.__class__(raw), map_location="cpu")
 
-def _train_model_locally(model_params: Dict[str, torch.Tensor], dataloader: DataLoader, epochs: int = 1) -> Dict[str, torch.Tensor]:
+def _train_model_locally(model_params: Dict[str, torch.Tensor], dataloader: DataLoader, epochs: int = 5) -> Dict[str, torch.Tensor]:
     """
     Internal training logic for a single client.
     """
@@ -81,7 +81,7 @@ def _train_model_locally(model_params: Dict[str, torch.Tensor], dataloader: Data
     model.to(device)
     
     loss_fn = nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
     
     model.train()
     for epoch in range(epochs):
