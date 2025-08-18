@@ -143,7 +143,7 @@ async def main():
         await orch.connect_all()
 
         global_model = CNN()
-        ROUNDS = 3
+        ROUNDS = 10
 
         for r in range(ROUNDS):
             print(f"\n[orchestrator] ===== Round {r+1} =====")
