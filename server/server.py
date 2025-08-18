@@ -37,6 +37,7 @@ CLIENTS = [
 UV_CMD = "uv"
 anthropic = Anthropic()
 
+# Functions to help formatting changes between training rounds and MCP
 def state_dict_to_b64(sd: Dict[str, torch.Tensor]) -> str:
     buf = io.BytesIO()
     torch.save({k: v.cpu() for k, v in sd.items()}, buf)
@@ -47,29 +48,19 @@ def b64_to_state_dict(b64: str) -> Dict[str, torch.Tensor]:
     buf = io.BytesIO(raw)
     return torch.load(buf, map_location="cpu")
 
+
+
 class Orchestrator:
     def __init__(self, user_goal: str):
         self.exit_stack = AsyncExitStack()
         self.sessions: Dict[str, ClientSession] = {}
+        self.tools_by_client: Dict[str, List[Dict[str, str]]] = {} # keep track of tools
         self.user_goal = user_goal
-
-    # async def connect_all(self):
-    #     for name, script in CLIENTS:
-    #         print(f"[orchestrator] Connecting to {name}...")
-    #         params = StdioServerParameters(
-    #             command=UV_CMD,
-    #             args=["--directory", str(script).rsplit("/", 1)[0], "run", str(script).rsplit("/", 1)[1]],
-    #             env=None
-    #         )
-    #         transport = await self.exit_stack.enter_async_context(stdio_client(params))
-    #         stdio, write = transport
-    #         session = await self.exit_stack.enter_async_context(ClientSession(stdio, write))
-    #         await session.initialize()
-    #         tools = await session.list_tools()
-    #         print(f"[orchestrator] {name} tools: {[t.name for t in tools.tools]}")
-    #         self.sessions[name] = session
     
     async def connect_all(self):
+        """
+        Connect to all client sessions, a handshake and get all the info about the various tools.
+        """
         for name, script in CLIENTS:
             print(f"[orchestrator] Connecting to {name}...")
 
@@ -99,15 +90,23 @@ class Orchestrator:
             await session.initialize()
             tools = await session.list_tools()
             print(f"[orchestrator] {name} tools: {[t.name for t in tools.tools]}")
+            self.tools_by_client[name] = [
+                {"tool": t.name, "description": t.description} for t in tools.tools
+            ]
             self.sessions[name] = session
 
     async def close(self):
+        """
+        Close all client sessions; opposite of connect_all method.
+        """
         await self.exit_stack.aclose()
 
     async def train_round(self, global_model: CNN, round_num: int, epochs: int = 1) -> CNN:
         global_sd_b64 = state_dict_to_b64(global_model.state_dict())
 
         # === Step 1: Ask Claude which clients to use ===
+        tool_info_json = json.dumps(self.tools_by_client, indent=2)
+
         msg = anthropic.messages.create(
             model="claude-3-5-sonnet-20240620",
             max_tokens=500,
@@ -115,40 +114,49 @@ class Orchestrator:
                 {
                     "role": "user",
                     "content": f"""
-You are coordinating a federated learning training round.
+    You are coordinating a federated learning training round.
 
-User goal: {self.user_goal}
-Round: {round_num}
+    User goal: {self.user_goal}
+    Round: {round_num}
 
-The following clients are available: {list(self.sessions.keys())}.
-You can call the tool `train_model_with_local_data` on a client.
+    The following clients and their tools are available:
+    {tool_info_json}
 
-Decide which clients to use for this round and how many epochs to train them for.
-Respond in JSON with a list of objects like:
-[{{"client": "a3s-client-0", "epochs": 1}}, ...]
-"""
+    Choose the most relevant clients and specify how many epochs to train.
+    Respond ONLY in JSON with a list of objects like:
+    [{{"client": "a3s-client-0", "tool": "train_model_with_local_data", "epochs": 1}}, ...]
+    """
                 }
             ],
         )
 
         try:
             plan = json.loads(msg.content[0].text)
+            print("[orchestrator] Claude response plan:", plan) # CHECK THIS AND SEE WHAT OUTPUT YOU GET
         except Exception as e:
             print(f"[orchestrator] Claude response parse error: {e}")
             return global_model
 
         # === Step 2: Execute tool calls ===
+        # 1. Reads Claude’s plan of which clients/tools to run
+        # 2. Sends the global model to each client
+        # 3. Collects their updated model weights and dataset size
+        # 4. Filters out errors and invalid responses
+        # 5. Builds a list of updates for federated averaging
+
         updates: List[Tuple[Dict[str, torch.Tensor], int]] = []
         for action in plan:
             client = action["client"]
+            tool = action.get("tool", "train_model_with_local_data")  # default fallback
             local_epochs = action.get("epochs", epochs)
+
             if client not in self.sessions:
                 print(f"[orchestrator] Unknown client {client}")
                 continue
 
-            print(f"[orchestrator] Sending model to {client} for local training...")
+            print(f"[orchestrator] Sending model to {client} with tool {tool}...")
             result = await self.sessions[client].call_tool(
-                "train_model_with_local_data",
+                tool,
                 {"global_model_params": global_sd_b64, "epochs": local_epochs}
             )
 
@@ -179,14 +187,21 @@ Respond in JSON with a list of objects like:
             print("[orchestrator] No updates received this round.")
             return global_model
 
-        new_global_sd = {k: torch.zeros_like(v) for k, v in global_model.state_dict().items()}
-        total_samples = sum(num for _, num in updates)
+
+        # Make an empty state dict with the same shape as the current global model’s parameters, to fill up updates
+        new_global_sd = {k: torch.zeros_like(v) for k, v in global_model.state_dict().items()} 
+        total_samples = sum(num for _, num in updates) # Count how many training samples across all clients (so we can weight their updates properly)
+        
+        # For each client:
+        #     Compute its weight (fraction of total samples)
+        #     Add its model parameters into the global average, scaled by that weight
+        #     This way, larger datasets influence the global model more than smaller ones
         for sd, num_samples in updates:
             weight = num_samples / total_samples
             for k in new_global_sd.keys():
                 new_global_sd[k] += sd[k] * weight
 
-        global_model.load_state_dict(new_global_sd)
+        global_model.load_state_dict(new_global_sd) # Replace the old global model parameters with the newly averaged ones
         return global_model
 
 async def main(user_goal: str):
