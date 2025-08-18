@@ -200,7 +200,7 @@ class Orchestrator:
             temp_model = CNN()
             temp_model.load_state_dict(updated_sd)
             acc = evaluate(temp_model, test_loader)
-            updates.append((updated_sd, acc))
+            updates.append((updated_sd, data["num_samples"], acc))
 
         # === Step 3: FedAvg aggregation ===
         if not updates:
@@ -208,18 +208,19 @@ class Orchestrator:
             return global_model
 
         new_global_sd = {k: torch.zeros_like(v) for k, v in global_model.state_dict().items()}
+        total_samples = sum(num for _, num, _ in updates)
 
         # Normalize accuracies into weights
-        total_acc = sum(acc for _, acc in updates)
+        total_acc = sum(acc for _, _, acc in updates)
         if total_acc == 0:  # fallback to equal weighting if all acc=0
             weights = [1/len(updates)] * len(updates)
         else:
-            weights = [acc / total_acc for _, acc in updates]
+            weights = [acc / total_acc for _, _, acc in updates]
 
         # Weighted aggregation
-        for (sd, _), weight in zip(updates, weights):
+        for (sd, num_samples, _), weight in zip(updates, weights):
             for k in new_global_sd.keys():
-                new_global_sd[k] += sd[k] * weight
+                new_global_sd[k] += sd[k] * weight * (num_samples / total_samples)
 
         global_model.load_state_dict(new_global_sd)
         return global_model
