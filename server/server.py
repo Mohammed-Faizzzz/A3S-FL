@@ -6,6 +6,13 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 import os, sys
 import json
+from anthropic import Anthropic
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+print(ANTHROPIC_API_KEY)
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path: sys.path.insert(0, ROOT)
@@ -28,6 +35,7 @@ CLIENTS = [
 ]
 
 UV_CMD = "uv"
+anthropic = Anthropic()
 
 def state_dict_to_b64(sd: Dict[str, torch.Tensor]) -> str:
     buf = io.BytesIO()
@@ -40,16 +48,49 @@ def b64_to_state_dict(b64: str) -> Dict[str, torch.Tensor]:
     return torch.load(buf, map_location="cpu")
 
 class Orchestrator:
-    def __init__(self):
+    def __init__(self, user_goal: str):
         self.exit_stack = AsyncExitStack()
         self.sessions: Dict[str, ClientSession] = {}
+        self.user_goal = user_goal
 
+    # async def connect_all(self):
+    #     for name, script in CLIENTS:
+    #         print(f"[orchestrator] Connecting to {name}...")
+    #         params = StdioServerParameters(
+    #             command=UV_CMD,
+    #             args=["--directory", str(script).rsplit("/", 1)[0], "run", str(script).rsplit("/", 1)[1]],
+    #             env=None
+    #         )
+    #         transport = await self.exit_stack.enter_async_context(stdio_client(params))
+    #         stdio, write = transport
+    #         session = await self.exit_stack.enter_async_context(ClientSession(stdio, write))
+    #         await session.initialize()
+    #         tools = await session.list_tools()
+    #         print(f"[orchestrator] {name} tools: {[t.name for t in tools.tools]}")
+    #         self.sessions[name] = session
+    
     async def connect_all(self):
         for name, script in CLIENTS:
             print(f"[orchestrator] Connecting to {name}...")
+
+            client_dir = os.path.abspath(os.path.join(ROOT, script.rsplit("/", 1)[0]))
+            client_script = script.rsplit("/", 1)[1]
+            
+            # Debug print
+            print(f"[debug] client_dir={client_dir}")
+            print(f"[debug] client_script={client_script}")
+            print(f"[debug] full_path={os.path.join(client_dir, client_script)}")
+
+            # Check existence
+            if not os.path.isdir(client_dir):
+                print(f"[error] Directory does not exist: {client_dir}")
+            if not os.path.isfile(os.path.join(client_dir, client_script)):
+                print(f"[error] File does not exist: {os.path.join(client_dir, client_script)}")
+
+
             params = StdioServerParameters(
                 command=UV_CMD,
-                args=["--directory", str(script).rsplit("/", 1)[0], "run", str(script).rsplit("/", 1)[1]],
+                args=["--directory", client_dir, "run", client_script],
                 env=None
             )
             transport = await self.exit_stack.enter_async_context(stdio_client(params))
@@ -63,48 +104,81 @@ class Orchestrator:
     async def close(self):
         await self.exit_stack.aclose()
 
-    async def train_round(self, global_model: CNN, epochs: int = 1) -> CNN:
+    async def train_round(self, global_model: CNN, round_num: int, epochs: int = 1) -> CNN:
         global_sd_b64 = state_dict_to_b64(global_model.state_dict())
 
+        # === Step 1: Ask Claude which clients to use ===
+        msg = anthropic.messages.create(
+            model="claude-3-5-sonnet-20240620",
+            max_tokens=500,
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"""
+You are coordinating a federated learning training round.
+
+User goal: {self.user_goal}
+Round: {round_num}
+
+The following clients are available: {list(self.sessions.keys())}.
+You can call the tool `train_model_with_local_data` on a client.
+
+Decide which clients to use for this round and how many epochs to train them for.
+Respond in JSON with a list of objects like:
+[{{"client": "a3s-client-0", "epochs": 1}}, ...]
+"""
+                }
+            ],
+        )
+
+        try:
+            plan = json.loads(msg.content[0].text)
+        except Exception as e:
+            print(f"[orchestrator] Claude response parse error: {e}")
+            return global_model
+
+        # === Step 2: Execute tool calls ===
         updates: List[Tuple[Dict[str, torch.Tensor], int]] = []
-        for name, session in self.sessions.items():
-            print(f"[orchestrator] Sending model to {name} for local training...")
-            result = await session.call_tool(
+        for action in plan:
+            client = action["client"]
+            local_epochs = action.get("epochs", epochs)
+            if client not in self.sessions:
+                print(f"[orchestrator] Unknown client {client}")
+                continue
+
+            print(f"[orchestrator] Sending model to {client} for local training...")
+            result = await self.sessions[client].call_tool(
                 "train_model_with_local_data",
-                {"global_model_params": global_sd_b64, "epochs": epochs}
+                {"global_model_params": global_sd_b64, "epochs": local_epochs}
             )
 
-            # Ensure result is valid and has content
             if not result or not getattr(result, "content", None):
-                print(f"[orchestrator] {name} error: no result content")
+                print(f"[orchestrator] {client} error: no result content")
                 continue
 
-            payload = None
-            if hasattr(result.content[0], "text"):
-                payload = result.content[0].text
-            else:
-                payload = result.content[0]
-            # print(f"[orchestrator] {name} result: {payload}")
-
-            if not payload:  # empty string, None, etc.
-                print(f"[orchestrator] {name} error: empty payload")
+            payload = result.content[0].text if hasattr(result.content[0], "text") else result.content[0]
+            if not payload:
+                print(f"[orchestrator] {client} error: empty payload")
                 continue
 
-            import json
             try:
                 data = json.loads(payload) if isinstance(payload, str) else payload
             except json.JSONDecodeError as e:
-                print(f"[orchestrator] {name} error decoding JSON: {e}")
+                print(f"[orchestrator] {client} error decoding JSON: {e}")
                 continue
 
             if "error" in data:
-                print(f"[orchestrator] {name} error: {data['error']}")
+                print(f"[orchestrator] {client} error: {data['error']}")
                 continue
 
             updated_sd = b64_to_state_dict(data["params_b64"])
             updates.append((updated_sd, data["num_samples"]))
 
-        # Aggregate via FedAvg
+        # === Step 3: FedAvg aggregation ===
+        if not updates:
+            print("[orchestrator] No updates received this round.")
+            return global_model
+
         new_global_sd = {k: torch.zeros_like(v) for k, v in global_model.state_dict().items()}
         total_samples = sum(num for _, num in updates)
         for sd, num_samples in updates:
@@ -115,8 +189,8 @@ class Orchestrator:
         global_model.load_state_dict(new_global_sd)
         return global_model
 
-async def main():
-    orch = Orchestrator()
+async def main(user_goal: str):
+    orch = Orchestrator(user_goal)
     try:
         await orch.connect_all()
 
@@ -126,15 +200,16 @@ async def main():
         ROUNDS = 3
         for r in range(ROUNDS):
             print(f"\n[orchestrator] ===== Round {r+1} =====")
-            global_model = await orch.train_round(global_model, epochs=1)
+            global_model = await orch.train_round(global_model, round_num=r+1, epochs=1)
             torch.save(global_model.state_dict(), f"global_model_round_{r+1}.pth")
             print(f"[orchestrator] Saved global model after round {r+1}")
 
         print("[orchestrator] Training complete.")
-
-        await asyncio.sleep(999999)  # Keep connections alive if needed
+        await asyncio.sleep(1)  # keep alive briefly if needed
     finally:
         await orch.close()
 
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    goal = input("Enter your training goal (e.g. 'detect wounds'): ")
+    asyncio.run(main(goal))
