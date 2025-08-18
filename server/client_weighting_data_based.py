@@ -118,7 +118,7 @@ class Orchestrator:
         """
         await self.exit_stack.aclose()
 
-    async def train_round(self, global_model: CNN, round_num: int, epochs: int = 1) -> CNN:
+    async def train_round(self, global_model: CNN, round_num: int, epochs: int = 5) -> CNN:
         global_sd_b64 = state_dict_to_b64(global_model.state_dict())
 
         # === Step 1: Ask Claude which clients to use ===
@@ -131,21 +131,29 @@ class Orchestrator:
                 {
                     "role": "user",
                     "content": f"""
-    You are coordinating a federated learning training round.
+        You are coordinating a federated learning training round.
 
-    User goal: {self.user_goal}
-    Round: {round_num}
+        User goal: {self.user_goal}
+        Round: {round_num}
 
-    The following clients and their tools are available:
-    {tool_info_json}
+        The following clients and their tools are available:
+        {tool_info_json}
 
-    Choose the most relevant clients and specify how many epochs to train.
-    Respond ONLY in JSON with a list of objects like:
-    [{{"client": "a3s-client-0", "tool": "train_model_with_local_data", "epochs": 1}}, ...]
-    """
+        Choose which clients to use. For each client, assign:
+        - tool (usually "train_model_with_local_data")
+        - epochs (integer)
+        - weight (a float between 0 and 1, all weights must sum to 1)
+
+        Respond ONLY in JSON like this:
+        [
+        {{"client": "a3s-client-0", "tool": "train_model_with_local_data", "epochs": 5, "weight": 0.6}},
+        {{"client": "a3s-client-1", "tool": "train_model_with_local_data", "epochs": 5, "weight": 0.4}}
+        ]
+        """
                 }
             ],
         )
+
 
         try:
             plan = json.loads(msg.content[0].text)
@@ -166,7 +174,8 @@ class Orchestrator:
             client = action["client"]
             tool = action.get("tool", "train_model_with_local_data")  # default fallback
             local_epochs = action.get("epochs", epochs)
-
+            weight = action.get("weight", None)
+ 
             if client not in self.sessions:
                 print(f"[orchestrator] Unknown client {client}")
                 continue
@@ -197,7 +206,8 @@ class Orchestrator:
                 continue
 
             updated_sd = b64_to_state_dict(data["params_b64"])
-            updates.append((updated_sd, data["num_samples"]))
+            if weight is not None:
+                updates.append((updated_sd, float(weight)))
 
         # === Step 3: FedAvg aggregation ===
         if not updates:
@@ -207,18 +217,16 @@ class Orchestrator:
 
         # Make an empty state dict with the same shape as the current global model’s parameters, to fill up updates
         new_global_sd = {k: torch.zeros_like(v) for k, v in global_model.state_dict().items()} 
-        total_samples = sum(num for _, num in updates) # Count how many training samples across all clients (so we can weight their updates properly)
         
         # For each client:
         #     Compute its weight (fraction of total samples)
         #     Add its model parameters into the global average, scaled by that weight
         #     This way, larger datasets influence the global model more than smaller ones
-        for sd, num_samples in updates:
-            weight = num_samples / total_samples
+        for sd, weight in updates:
             for k in new_global_sd.keys():
                 new_global_sd[k] += sd[k] * weight
 
-        global_model.load_state_dict(new_global_sd) # Replace the old global model parameters with the newly averaged ones
+        global_model.load_state_dict(new_global_sd)
         return global_model
 
 async def main(user_goal: str):
