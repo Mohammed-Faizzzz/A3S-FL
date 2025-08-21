@@ -9,7 +9,11 @@ from torch.utils.data import TensorDataset
 y_test = y_test.flatten()
 
 # Convert to PyTorch tensors
-x_test_t = torch.tensor(x_test).permute(0, 3, 1, 2).float() / 255.0  # NHWC -> NCHW, normalize
+mean = torch.tensor([0.5071, 0.4867, 0.4408]).view(3,1,1)
+std  = torch.tensor([0.2675, 0.2565, 0.2761]).view(3,1,1)
+
+x_test_t = torch.tensor(x_test).permute(0, 3, 1, 2).float() / 255.0
+x_test_t = (x_test_t - mean) / std
 y_test_t = torch.tensor(y_test).long()
 
 # Wrap in TensorDataset
