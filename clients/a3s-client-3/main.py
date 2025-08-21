@@ -42,6 +42,12 @@ class MyDataset(Dataset):
         self.images = torch.from_numpy(data[images_key]).float()
         if self.images.ndim == 4 and self.images.shape[-1] in (1, 3):
             self.images = self.images.permute(0, 3, 1, 2) / 255.0
+            
+        CIFAR100_MEAN = torch.tensor([0.5071, 0.4867, 0.4408], dtype=torch.float32).view(3,1,1)
+        CIFAR100_STD  = torch.tensor([0.2675, 0.2565, 0.2761], dtype=torch.float32).view(3,1,1)
+
+        self.images = (self.images - CIFAR100_MEAN) / CIFAR100_STD
+            
         self.labels = torch.from_numpy(data[labels_key]).long()
     
     def __len__(self) -> int:
@@ -76,7 +82,8 @@ def _train_model_locally(model_params: Dict[str, torch.Tensor], dataloader: Data
     """
     model = CNN()
     model.load_state_dict(model_params)
-    
+    epochs = 10
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model.to(device)
     
@@ -98,11 +105,12 @@ def _train_model_locally(model_params: Dict[str, torch.Tensor], dataloader: Data
     return model.state_dict()
 
 @mcp.tool()
-async def train_model_with_local_data(global_model_params: str, epochs: int = 1) -> Dict[str, Any]:
+async def train_model_with_local_data(global_model_params: str, epochs: int = 10) -> Dict[str, Any]:
     """
     Performs federated learning on a client with a non-IID subset of the
     CIFAR-100 dataset.
     total_samples: 6379,
+    top classes: train (7.8%), bed (7.8%), road (7.8%), bicycle (7.8%), possum (7.8%),
     num_unique_classes: 22,
     class_skewness_std_dev: 204.50,
     class_distribution:
