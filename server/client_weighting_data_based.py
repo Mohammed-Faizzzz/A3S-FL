@@ -9,6 +9,7 @@ import json
 from anthropic import Anthropic
 from dotenv import load_dotenv
 from torch.utils.data import TensorDataset, DataLoader
+import numpy as np
 
 # Load environment variables
 load_dotenv()
@@ -229,27 +230,32 @@ class Orchestrator:
         global_model.load_state_dict(new_global_sd)
         return global_model
 
-async def main(user_goal: str):
+async def main(user_goal: str, save_path: str):
     orch = Orchestrator(user_goal)
+    accuracies = []
+
     try:
         await orch.connect_all()
-
-        # Init global model
         global_model = CNN()
 
-        ROUNDS = 10
+        ROUNDS = 100
         for r in range(ROUNDS):
             print(f"\n[orchestrator] ===== Round {r+1} =====")
             global_model = await orch.train_round(global_model, round_num=r+1, epochs=1)
-            torch.save(global_model.state_dict(), f"global_model_round_{r+1}.pth")
-            evaluate(global_model, test_loader)
+            torch.save(global_model.state_dict(), f"global_model_round_wdb.pth")
+            
+            acc = evaluate(global_model, test_loader)
+            accuracies.append(acc)
+
             print(f"[orchestrator] Saved global model after round {r+1}")
 
-        print("[orchestrator] Training complete.")
-        await asyncio.sleep(1)  # keep alive briefly if needed
+        # Save results for plotting
+        np.save(save_path, np.array(accuracies))
+        print(f"[orchestrator] Accuracies saved to {save_path}")
+
     finally:
         await orch.close()
 
 if __name__ == "__main__":
     goal = input("Enter your training goal (e.g. 'detect wounds'): ")
-    asyncio.run(main(goal))
+    asyncio.run(main(goal, "results/agent_weight.npy"))

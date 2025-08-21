@@ -6,6 +6,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 import os, sys, json
 from torch.utils.data import TensorDataset, DataLoader
+import numpy as np
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
@@ -130,32 +131,43 @@ class Orchestrator:
         for sd, num_samples in updates:
             weight = num_samples / total_samples
             for k in new_global_sd.keys():
-                new_global_sd[k] += sd[k] * weight
+                if new_global_sd[k].dtype.is_floating_point:
+                    new_global_sd[k] += sd[k] * weight
+                else:
+                    # For non-float params (like num_batches_tracked), just copy one client's value
+                    new_global_sd[k] = sd[k]
 
         global_model.load_state_dict(new_global_sd)
         return global_model
 
 
 # === Entry point ===
-async def main():
+async def main(save_path: str):
     orch = Orchestrator()
+    accuracies = []
+
     try:
         await orch.connect_all()
+        global_model = CNN(in_features=3, num_classes=100)
 
-        global_model = CNN()
-        ROUNDS = 10
-
+        ROUNDS = 15
         for r in range(ROUNDS):
             print(f"\n[orchestrator] ===== Round {r+1} =====")
             global_model = await orch.train_round(global_model, epochs=1)
-            torch.save(global_model.state_dict(), f"global_model_round_{r+1}.pth")
-            evaluate(global_model, test_loader)
+            torch.save(global_model.state_dict(), f"global_model_round.pth")
+            
+            acc = evaluate(global_model, test_loader)
+            accuracies.append(acc)
+
             print(f"[orchestrator] Saved global model after round {r+1}")
 
-        print("[orchestrator] Training complete.")
+        # Save results for plotting
+        np.save(save_path, np.array(accuracies))
+        print(f"[orchestrator] Accuracies saved to {save_path}")
+
     finally:
         await orch.close()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main("results/fedavg.npy"))
