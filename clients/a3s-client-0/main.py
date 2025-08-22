@@ -65,15 +65,25 @@ def _load_local_dataloader() -> DataLoader:
     except FileNotFoundError:
         raise FileNotFoundError(f"Local data not found at {LOCAL_DATA_PATH}")
 
-def _state_dict_to_b64(sd):
-    buf = io.BytesIO(); import torch as _t
-    _t.save({k: v.cpu() for k, v in sd.items()}, buf)
+def _state_dict_to_b64(sd: Dict[str, torch.Tensor]) -> str:
+    buf = io.BytesIO()
+    torch.save(
+        {k: (v.cpu().half() if v.dtype.is_floating_point else v.cpu()) for k, v in sd.items()},
+        buf,
+    )
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
-def _b64_to_state_dict(b64):
-    raw = base64.b64decode(b64.encode("ascii")); buf = io.BytesIO()
-    import torch as _t
-    return _t.load(buf.__class__(raw), map_location="cpu")
+
+def _b64_to_state_dict(b64: str) -> Dict[str, torch.Tensor]:
+    raw = base64.b64decode(b64.encode("ascii"))
+    buf = io.BytesIO(raw)
+    sd = torch.load(buf, map_location="cpu")
+    # cast back to float32 so training is unaffected
+    for k, v in sd.items():
+        if v.dtype == torch.float16:
+            sd[k] = v.float()
+    return sd
+
 
 def _train_model_locally(model_params: Dict[str, torch.Tensor], dataloader: DataLoader, epochs: int = 10) -> Dict[str, torch.Tensor]:
     """

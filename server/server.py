@@ -40,13 +40,21 @@ test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False)
 # === Utility functions ===
 def state_dict_to_b64(sd: Dict[str, torch.Tensor]) -> str:
     buf = io.BytesIO()
-    torch.save({k: v.cpu() for k, v in sd.items()}, buf)
+    torch.save(
+        {k: (v.cpu().half() if v.dtype.is_floating_point else v.cpu()) for k, v in sd.items()},
+        buf,
+    )
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 def b64_to_state_dict(b64: str) -> Dict[str, torch.Tensor]:
     raw = base64.b64decode(b64.encode("ascii"))
     buf = io.BytesIO(raw)
-    return torch.load(buf, map_location="cpu")
+    sd = torch.load(buf, map_location="cpu")
+    # cast back to float32 so training is unaffected
+    for k, v in sd.items():
+        if v.dtype == torch.float16:
+            sd[k] = v.float()
+    return sd
 
 def evaluate(model: CNN, test_loader):
     model.eval()
@@ -131,21 +139,23 @@ class Orchestrator:
             print("[orchestrator] No updates received this round.")
             return global_model
 
-        new_global_sd = {k: torch.zeros_like(v) for k, v in global_model.state_dict().items()}
-        total_samples = sum(num for _, num in updates)
+        # new_global_sd = {k: torch.zeros_like(v) for k, v in global_model.state_dict().items()}
+        new_global_sd = {k: torch.zeros_like(v, device="cpu") for k, v in global_model.state_dict().items()}
 
+        total_samples = sum(num for _, num in updates)
+        
         for sd, num_samples in updates:
             weight = num_samples / total_samples
             for k in new_global_sd.keys():
+                v = sd[k].cpu()   # ensure on CPU
                 if new_global_sd[k].dtype.is_floating_point:
-                    new_global_sd[k] += sd[k] * weight
+                    new_global_sd[k] += v * weight
                 else:
-                    # For non-float params (like num_batches_tracked), just copy one client's value
-                    new_global_sd[k] = sd[k]
+                    new_global_sd[k] = v
 
         global_model.load_state_dict(new_global_sd)
+        global_model.to(DEVICE)
         return global_model
-
 
 # === Entry point ===
 async def main(save_path: str):
@@ -161,7 +171,6 @@ async def main(save_path: str):
         for r in range(ROUNDS):
             print(f"\n[orchestrator] ===== Round {r+1} =====")
             global_model = await orch.train_round(global_model, epochs=1)
-            torch.save(global_model.state_dict(), f"global_model_round.pth")
             
             acc = evaluate(global_model, test_loader)
             accuracies.append(acc)
@@ -169,6 +178,7 @@ async def main(save_path: str):
             print(f"[orchestrator] Saved global model after round {r+1}")
 
         # Save results for plotting
+        torch.save(global_model.state_dict(), f"global_model_round.pth")
         np.save(save_path, np.array(accuracies))
         print(f"[orchestrator] Accuracies saved to {save_path}")
 
