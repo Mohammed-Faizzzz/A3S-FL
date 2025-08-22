@@ -14,6 +14,9 @@ if ROOT not in sys.path:
 
 from models.cnn_model import CNN  # your base model
 
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"[orchestrator] Using device: {DEVICE}")
+
 # Hardcoded client configs
 CLIENTS = [
     ("a3s-client-0", "clients/a3s-client-0/main.py"),
@@ -46,17 +49,20 @@ def b64_to_state_dict(b64: str) -> Dict[str, torch.Tensor]:
     return torch.load(buf, map_location="cpu")
 
 def evaluate(model: CNN, test_loader):
-        model.eval()
-        correct, total = 0, 0
-        with torch.no_grad():
-            for x, y in test_loader:
-                outputs = model(x)
-                preds = outputs.argmax(dim=1)
-                correct += (preds == y).sum().item()
-                total += y.size(0)
-        acc = correct / total
-        print(f"[orchestrator] Test Accuracy: {acc:.4f}")
-        return acc
+    model.eval()
+    model.to(DEVICE)  # ensure model is on GPU if available
+    correct, total = 0, 0
+    with torch.no_grad():
+        for x, y in test_loader:
+            x, y = x.to(DEVICE), y.to(DEVICE)
+            outputs = model(x)
+            preds = outputs.argmax(dim=1)
+            correct += (preds == y).sum().item()
+            total += y.size(0)
+    acc = correct / total
+    print(f"[orchestrator] Test Accuracy: {acc:.4f}")
+    return acc
+
 
 # === Orchestrator ===
 class Orchestrator:
@@ -148,7 +154,8 @@ async def main(save_path: str):
 
     try:
         await orch.connect_all()
-        global_model = CNN(in_features=3, num_classes=100)
+        global_model = CNN()
+        global_model.to(DEVICE)
 
         ROUNDS = 15
         for r in range(ROUNDS):
