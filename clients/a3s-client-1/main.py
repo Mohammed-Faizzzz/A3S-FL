@@ -28,43 +28,30 @@ def log(*a, **kw):
 
 # --- Internal Data and Training Methods ---
 
-LOCAL_DATA_PATH = os.path.join(ROOT, "data", "client_0.npz")
+# LOCAL_DATA_PATH = os.path.join(ROOT, "data", "client_1.npz")
+LOCAL_DATA_PATH = os.path.join(ROOT, "data", "client_1.pt")
 
-class MyDataset(Dataset):
-    """
-    A simple Dataset class to load pre-split data from a .npz file.
-    """
-    def __init__(self, data_path: str):
-        data = np.load(data_path, allow_pickle=True)
-        images_key = 'images' if 'images' in data else 'x'
-        labels_key = 'labels' if 'labels' in data else 'y'
+class MyDataset(torch.utils.data.Dataset):
+    def __init__(self, tensors, labels):
+        self.tensors = tensors
+        self.labels = labels
 
-        self.images = torch.from_numpy(data[images_key]).float()
-        if self.images.ndim == 4 and self.images.shape[-1] in (1, 3):
-            self.images = self.images.permute(0, 3, 1, 2) / 255.0
-            
-        CIFAR100_MEAN = torch.tensor([0.5071, 0.4867, 0.4408], dtype=torch.float32).view(3,1,1)
-        CIFAR100_STD  = torch.tensor([0.2675, 0.2565, 0.2761], dtype=torch.float32).view(3,1,1)
+    def __len__(self):
+        return len(self.tensors)
 
-        self.images = (self.images - CIFAR100_MEAN) / CIFAR100_STD
-            
-        self.labels = torch.from_numpy(data[labels_key]).long()
+    def __getitem__(self, idx):
+        return self.tensors[idx], self.labels[idx]
     
-    def __len__(self) -> int:
-        return len(self.images)
+    # def __len__(self) -> int:
+    #     return len(self.images)
     
-    def __getitem__(self, idx: int) -> Any:
-        return self.images[idx], self.labels[idx]
+    # def __getitem__(self, idx: int) -> Any:
+    #     return self.images[idx], self.labels[idx]
 
-def _load_local_dataloader() -> DataLoader:
-    """
-    Internal method to load and return the client's local data loader.
-    """
-    try:
-        local_dataset = MyDataset(LOCAL_DATA_PATH)
-        return DataLoader(local_dataset, batch_size=32, shuffle=True)
-    except FileNotFoundError:
-        raise FileNotFoundError(f"Local data not found at {LOCAL_DATA_PATH}")
+def _load_local_dataloader(batch_size=32):
+    data = torch.load(LOCAL_DATA_PATH)  # loads preprocessed .pt file
+    dataset = MyDataset(data["x_train"], data["y_train"])
+    return DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
 def _state_dict_to_b64(sd: Dict[str, torch.Tensor]) -> str:
     buf = io.BytesIO()
@@ -73,7 +60,6 @@ def _state_dict_to_b64(sd: Dict[str, torch.Tensor]) -> str:
         buf,
     )
     return base64.b64encode(buf.getvalue()).decode("ascii")
-
 
 def _b64_to_state_dict(b64: str) -> Dict[str, torch.Tensor]:
     raw = base64.b64decode(b64.encode("ascii"))
@@ -97,7 +83,7 @@ def _train_model_locally(model_params: Dict[str, torch.Tensor], dataloader: Data
     model.to(device)
     
     loss_fn = nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
     
     model.train()
     for epoch in range(epochs):
