@@ -8,8 +8,8 @@ import numpy as np
 import torch.nn as nn
 import io, base64
 from torch.utils.data import DataLoader, Dataset
-# /Users/mohammedfaiz/Desktop/FLock/MCP-Attack/clients/a3s-client-0/main.py
 from dotenv import load_dotenv
+import logging
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if ROOT not in sys.path: sys.path.insert(0, ROOT)
@@ -23,13 +23,21 @@ private_key = os.getenv("PRIVATE_KEY")
 base_url = os.getenv("RESOURCE_SERVER_URL")
 endpoint_path = os.getenv("ENDPOINT_PATH")
 
-def log(*a, **kw):
-    print(*a, file=sys.stderr, flush=True, **kw)
-
 # --- Internal Data and Training Methods ---
 
-# LOCAL_DATA_PATH = os.path.join(ROOT, "data", "client_2.npz")
 LOCAL_DATA_PATH = os.path.join(ROOT, "data", "client_2.pt")
+
+# Logging: file + stderr (not MCP’s stdio)
+logfile = os.path.join(ROOT, f"{mcp.name}.log")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler(logfile, mode="a"),
+        logging.StreamHandler(sys.__stderr__)  # safe to real stderr
+    ]
+)
+logger = logging.getLogger(mcp.name)
 
 class MyDataset(torch.utils.data.Dataset):
     def __init__(self, tensors, labels):
@@ -41,17 +49,11 @@ class MyDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         return self.tensors[idx], self.labels[idx]
-    
-    # def __len__(self) -> int:
-    #     return len(self.images)
-    
-    # def __getitem__(self, idx: int) -> Any:
-    #     return self.images[idx], self.labels[idx]
 
 def _load_local_dataloader(batch_size=32):
     data = torch.load(LOCAL_DATA_PATH)  # loads preprocessed .pt file
-    dataset = MyDataset(data["x_train"], data["y_train"])
-    return DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    dataset = MyDataset(data["x"], data["y"])
+    return DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
 def _state_dict_to_b64(sd: Dict[str, torch.Tensor]) -> str:
     buf = io.BytesIO()
@@ -78,7 +80,7 @@ def _train_model_locally(model_params: Dict[str, torch.Tensor], dataloader: Data
     model = CNN()
     model.load_state_dict(model_params)
     epochs = 3
-
+    
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model.to(device)
     
@@ -87,34 +89,27 @@ def _train_model_locally(model_params: Dict[str, torch.Tensor], dataloader: Data
     
     model.train()
     for epoch in range(epochs):
+        running_loss = 0.0
         for images, labels in dataloader:
             images, labels = images.to(device), labels.to(device)
-            
             optimizer.zero_grad()
             outputs = model(images)
             loss = loss_fn(outputs, labels)
             loss.backward()
             optimizer.step()
-    
-    log(f"Client {mcp.name} finished local training for {epochs} epochs.")
+            running_loss += loss.item()
+        logger.info(f"Epoch {epoch+1}/{epochs}, loss={running_loss/len(dataloader):.4f}")
+
+    logger.info(f"Client {mcp.name} finished local training for {epochs} epochs.")
     return model.state_dict()
 
 @mcp.tool()
 async def train_model_with_local_data(global_model_params: str, epochs: int = 1) -> Dict[str, Any]:
     """
-    Total Samples: 5160
-    Top classes: shark (7.5%), crocodile (4.7%), trout (4.7%), turtle (4.5%), cattle (4.2%)
-    Number of Unique Classes: 85
-    Class Skewness (Std Dev): 71.01
-    Class Distribution: {0: 97, 1: 27, 2: 1, 3: 36, 4: 20, 5: 127, 6: 21, 7: 27, 9: 27,
-    11: 10, 12: 74, 13: 7, 14: 161, 15: 110, 16: 60, 17: 165, 18: 49, 19: 218, 20: 6,
-    21: 32, 26: 57, 27: 244, 28: 24, 29: 12, 30: 39, 31: 10, 32: 19, 33: 168, 34: 88,
-    35: 111, 36: 110, 37: 20, 38: 17, 39: 66, 40: 17, 41: 61, 42: 5, 45: 16, 46: 125,
-    47: 6, 48: 2, 49: 51, 50: 106, 51: 34, 52: 20, 53: 7, 54: 13, 55: 1, 56: 162, 57: 74,
-    58: 25, 59: 69, 60: 2, 61: 11, 62: 32, 63: 18, 64: 20, 65: 59, 66: 4, 68: 200, 69: 10,
-    70: 5, 71: 4, 72: 72, 73: 385, 74: 61, 75: 95, 76: 5, 77: 12, 78: 58, 79: 1, 81: 115,
-    82: 56, 83: 1, 84: 93, 85: 31, 86: 6, 87: 2, 88: 157, 89: 54, 91: 241, 93: 231, 94: 3,
-    98: 11, 99: 51}    
+    Samples: 4392
+    Unique classes: 97
+    Class distribution: {0: 88, 1: 24, 2: 3, 3: 27, 4: 33, 5: 15, 6: 91, 7: 58, 8: 80, 9: 344, 10: 66, 11: 15, 12: 13, 13: 3, 14: 19, 15: 55, 16: 95, 17: 3, 18: 7, 19: 21, 20: 80, 21: 1, 22: 28, 23: 35, 24: 9, 25: 74, 26: 4, 27: 114, 28: 62, 29: 53, 30: 154, 31: 5, 32: 90, 33: 72, 34: 23, 35: 17, 36: 32, 37: 6, 38: 134, 39: 1, 40: 4, 41: 159, 42: 3, 43: 38, 44: 82, 45: 27, 46: 29, 47: 58, 49: 258, 50: 7, 51: 47, 52: 3, 53: 19, 54: 4, 55: 66, 56: 23, 57: 5, 58: 4, 59: 6, 60: 16, 61: 13, 62: 24, 63: 8, 64: 122, 65: 1, 66: 1, 67: 2, 68: 2, 69: 16, 70: 4, 72: 95, 73: 23, 74: 61, 75: 53, 76: 17, 77: 36, 78: 2, 79: 6, 80: 4, 81: 34, 82: 31, 83: 11, 85: 19, 86: 2, 87: 184, 88: 25, 89: 1, 90: 157, 91: 8, 92: 42, 93: 164, 94: 12, 95: 88, 96: 117, 97: 1, 98: 91, 99: 3}
+    Top classes: bottle (7.8%), mountain (5.9%), television (4.2%), turtle (3.7%), lawn_mower (3.6%)    
     
     Args:
         global_model_params: A dictionary of the global model's parameters.
@@ -133,9 +128,9 @@ async def train_model_with_local_data(global_model_params: str, epochs: int = 1)
             "num_samples": len(local_dataloader.dataset)
         }
     except FileNotFoundError as e:
-        log(f"Error: {e}")
+        logger.exception(f"Exception in {mcp.name}")
         return {"error": str(e)}
 
 if __name__ == "__main__":
-    log(f"Starting MCP server for {mcp.name}...")
+    logger.info(f"Starting MCP server for {mcp.name}...")
     mcp.run(transport='stdio')
