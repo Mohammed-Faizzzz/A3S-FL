@@ -33,7 +33,7 @@ def semantic_summary(y, top_k=5):
     return total, tops
 
 # Path to the .npz files
-data_dir = "./"   # adjust if needed
+data_dir = "./data_numpy"   # adjust if needed
 
 for fname in sorted(os.listdir(data_dir)):
     if fname.startswith("client_") and fname.endswith(".npz"):

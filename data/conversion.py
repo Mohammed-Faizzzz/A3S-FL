@@ -6,8 +6,8 @@ import torch
 MEAN = torch.tensor([0.5071, 0.4867, 0.4408]).view(3, 1, 1)
 STD  = torch.tensor([0.2675, 0.2565, 0.2761]).view(3, 1, 1)
 
-input_dir = "./splits_cifar100_noniid"   # where your .npz files are
-output_dir = "./splits_cifar100_torch"   # where we'll save .pt files
+input_dir = "./data_numpy"   # where your .npz files are
+output_dir = "./data_torch"   # where we'll save .pt files
 os.makedirs(output_dir, exist_ok=True)
 
 for fname in os.listdir(input_dir):

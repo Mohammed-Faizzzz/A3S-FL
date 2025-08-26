@@ -17,7 +17,7 @@ y_train = y_train.flatten()
 
 # Specify num of clients and skew
 num_clients = 10
-delta = 0.01
+delta = 0.5
 
 # Holds data for each client
 client_indices = [[] for _ in range(num_clients)]
@@ -83,3 +83,16 @@ for desc in all_client_descriptions:
     print(f"Number of Unique Classes: {desc['unique_classes_count']}")
     print(f"Class Skewness (Std Dev): {desc['class_skew_metric']:.2f}")
     print("Class Distribution:", desc['class_distribution'])
+    
+
+save_dir = "./data_numpy"
+os.makedirs(save_dir, exist_ok=True)
+
+for i, (x, y) in enumerate(client_data):
+    # Save directly as npz (keep raw CIFAR format: [N, 32, 32, 3])
+    np.savez_compressed(
+        os.path.join(save_dir, f"client_{i}.npz"),
+        x=x.astype(np.uint8),
+        y=y.astype(np.int64)
+    )
+    print(f"Saved client_{i}.npz: {x.shape}, labels={len(y)}")

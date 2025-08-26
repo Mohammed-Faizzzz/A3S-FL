@@ -78,7 +78,7 @@ def _train_model_locally(model_params: Dict[str, torch.Tensor], dataloader: Data
     """
     model = CNN()
     model.load_state_dict(model_params)
-    epochs = 10
+    epochs = 3
     
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model.to(device)
