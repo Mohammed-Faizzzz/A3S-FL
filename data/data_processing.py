@@ -9,6 +9,10 @@ JSON_SPLIT_FILE = "dirichlet0.5_clients10.json"
 SAVE_DIR = "./data"              # output directory
 os.makedirs(SAVE_DIR, exist_ok=True)
 
+# CIFAR-100 normalization values
+CIFAR100_MEAN = (0.5071, 0.4867, 0.4408)
+CIFAR100_STD  = (0.2675, 0.2565, 0.2761)
+
 # CIFAR-100 fine label names
 CIFAR100_FINE = [
     'apple','aquarium_fish','baby','bear','beaver','bed','bee','beetle','bicycle','bottle',
@@ -40,13 +44,16 @@ def semantic_summary(y, top_k=5):
 
     return total, tops
 
-# ===== Load CIFAR-100 =====
-transform = transforms.Compose([transforms.ToTensor()])
+# ===== Load CIFAR-100 with normalization =====
+transform = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize(CIFAR100_MEAN, CIFAR100_STD)
+])
 
 trainset = datasets.CIFAR100(root=SAVE_DIR, train=True, download=True, transform=transform)
 testset  = datasets.CIFAR100(root=SAVE_DIR, train=False, download=True, transform=transform)
 
-# tensors
+# Convert to tensors
 x_train = torch.stack([trainset[i][0] for i in range(len(trainset))])
 y_train = torch.tensor([trainset[i][1] for i in range(len(trainset))])
 
@@ -90,10 +97,10 @@ for client_id, indices in split.items():
 
 # ===== Save global test dataset =====
 torch.save({"x": x_test, "y": y_test}, os.path.join(SAVE_DIR, "global_test_dataset.pt"))
-print(f"\n✅ Saved global test dataset with {len(y_test)} samples")
+print(f"\n Saved global test dataset with {len(y_test)} samples")
 
 # ===== Save metadata =====
 with open(os.path.join(SAVE_DIR, "client_metadata.json"), "w") as f:
     json.dump(metadata, f, indent=2)
 
-print(f"✅ Metadata saved to {os.path.join(SAVE_DIR, 'client_metadata.json')}")
+print(f" Metadata saved to {os.path.join(SAVE_DIR, 'client_metadata.json')}")

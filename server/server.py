@@ -68,7 +68,7 @@ def evaluate(model: CNN, test_loader):
             correct += (preds == y).sum().item()
             total += y.size(0)
     acc = correct / total
-    print(f"[orchestrator] Test Accuracy: {acc:.4f}")
+    print(f"[orchestrator] Test Accuracy: {acc:.4f}", flush=True)
     return acc
 
 
@@ -116,16 +116,21 @@ class Orchestrator:
                 print(f"[orchestrator] {name} error: no result content")
                 continue
 
-            payload = result.content[0].text if hasattr(result.content[0], "text") else result.content[0]
-            if not payload:
-                print(f"[orchestrator] {name} error: empty payload")
-                continue
-            print(f"[orchestrator] Raw client result from {name}: {result.content}")
+            payload = result.content[0]
 
-            try:
-                data = json.loads(payload) if isinstance(payload, str) else payload
-            except json.JSONDecodeError as e:
-                print(f"[orchestrator] {name} error decoding JSON: {e}")
+            # If MCP wrapped it in .text
+            if hasattr(payload, "text"):
+                try:
+                    data = json.loads(payload.text)
+                except json.JSONDecodeError as e:
+                    print(f"[orchestrator] {name} error decoding JSON: {e}")
+                    continue
+            else:
+                # Already structured dict
+                data = payload
+
+            if not isinstance(data, dict):
+                print(f"[orchestrator] {name} returned non-dict payload: {data}")
                 continue
 
             if "error" in data:
@@ -140,7 +145,6 @@ class Orchestrator:
             print("[orchestrator] No updates received this round.")
             return global_model
 
-        # new_global_sd = {k: torch.zeros_like(v) for k, v in global_model.state_dict().items()}
         new_global_sd = {k: torch.zeros_like(v, device="cpu") for k, v in global_model.state_dict().items()}
 
         total_samples = sum(num for _, num in updates)
@@ -157,71 +161,6 @@ class Orchestrator:
         global_model.load_state_dict(new_global_sd)
         global_model.to(DEVICE)
         return global_model
-
-    # async def train_round(self, global_model: CNN, epochs: int = 1) -> CNN:
-    #     global_sd_b64 = state_dict_to_b64(global_model.state_dict())
-
-    #     async def train_one_client(name, session):
-    #         print(f"[orchestrator] Sending model to {name} for local training...")
-    #         try:
-    #             result = await session.call_tool(
-    #                 "train_model_with_local_data",
-    #                 {"global_model_params": global_sd_b64, "epochs": epochs},
-    #             )
-
-    #             if not result or not getattr(result, "content", None):
-    #                 print(f"[orchestrator] {name} error: no result content")
-    #                 return None
-
-    #             payload = result.content[0].text if hasattr(result.content[0], "text") else result.content[0]
-    #             if not payload:
-    #                 print(f"[orchestrator] {name} error: empty payload")
-    #                 return None
-
-    #             try:
-    #                 data = json.loads(payload) if isinstance(payload, str) else payload
-    #             except json.JSONDecodeError as e:
-    #                 print(f"[orchestrator] {name} error decoding JSON: {e}")
-    #                 return None
-
-    #             if "error" in data:
-    #                 print(f"[orchestrator] {name} error: {data['error']}")
-    #                 return None
-
-    #             updated_sd = b64_to_state_dict(data["params_b64"])
-    #             return (updated_sd, data["num_samples"])
-
-    #         except Exception as e:
-    #             print(f"[orchestrator] {name} exception: {e}")
-    #             return None
-
-    #     # Run all clients in parallel
-    #     results = await asyncio.gather(
-    #         *(train_one_client(name, session) for name, session in self.sessions.items())
-    #     )
-
-    #     updates = [r for r in results if r is not None]
-
-    #     # === FedAvg aggregation (same as before) ===
-    #     if not updates:
-    #         print("[orchestrator] No updates received this round.")
-    #         return global_model
-
-    #     new_global_sd = {k: torch.zeros_like(v, device="cpu") for k, v in global_model.state_dict().items()}
-    #     total_samples = sum(num for _, num in updates)
-
-    #     for sd, num_samples in updates:
-    #         weight = num_samples / total_samples
-    #         for k in new_global_sd.keys():
-    #             v = sd[k].cpu()   # keep on CPU for averaging
-    #             if new_global_sd[k].dtype.is_floating_point:
-    #                 new_global_sd[k] += v * weight
-    #             else:
-    #                 new_global_sd[k] = v
-
-    #     global_model.load_state_dict(new_global_sd)
-    #     global_model.to(DEVICE)
-    #     return global_model
 
 # === Entry point ===
 async def main(save_path: str):
@@ -241,10 +180,8 @@ async def main(save_path: str):
             acc = evaluate(global_model, test_loader)
             accuracies.append(acc)
 
-            print(f"[orchestrator] Saved global model after round {r+1}")
-
         # Save results for plotting
-        torch.save(global_model.state_dict(), f"global_model_round.pth")
+        torch.save(global_model.state_dict(), f"global_model.pth")
         np.save(save_path, np.array(accuracies))
         print(f"[orchestrator] Accuracies saved to {save_path}")
 

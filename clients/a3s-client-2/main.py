@@ -106,10 +106,12 @@ def _train_model_locally(model_params: Dict[str, torch.Tensor], dataloader: Data
 @mcp.tool()
 async def train_model_with_local_data(global_model_params: str, epochs: int = 1) -> Dict[str, Any]:
     """
+    Performs federated learning on a client with a non-IID subset of the
+    CIFAR-100 dataset.
     Samples: 4392
     Unique classes: 97
     Class distribution: {0: 88, 1: 24, 2: 3, 3: 27, 4: 33, 5: 15, 6: 91, 7: 58, 8: 80, 9: 344, 10: 66, 11: 15, 12: 13, 13: 3, 14: 19, 15: 55, 16: 95, 17: 3, 18: 7, 19: 21, 20: 80, 21: 1, 22: 28, 23: 35, 24: 9, 25: 74, 26: 4, 27: 114, 28: 62, 29: 53, 30: 154, 31: 5, 32: 90, 33: 72, 34: 23, 35: 17, 36: 32, 37: 6, 38: 134, 39: 1, 40: 4, 41: 159, 42: 3, 43: 38, 44: 82, 45: 27, 46: 29, 47: 58, 49: 258, 50: 7, 51: 47, 52: 3, 53: 19, 54: 4, 55: 66, 56: 23, 57: 5, 58: 4, 59: 6, 60: 16, 61: 13, 62: 24, 63: 8, 64: 122, 65: 1, 66: 1, 67: 2, 68: 2, 69: 16, 70: 4, 72: 95, 73: 23, 74: 61, 75: 53, 76: 17, 77: 36, 78: 2, 79: 6, 80: 4, 81: 34, 82: 31, 83: 11, 85: 19, 86: 2, 87: 184, 88: 25, 89: 1, 90: 157, 91: 8, 92: 42, 93: 164, 94: 12, 95: 88, 96: 117, 97: 1, 98: 91, 99: 3}
-    Top classes: bottle (7.8%), mountain (5.9%), television (4.2%), turtle (3.7%), lawn_mower (3.6%)    
+    Top classes: bottle (7.8%), mountain (5.9%), television (4.2%), turtle (3.7%), lawn_mower (3.6%)
     
     Args:
         global_model_params: A dictionary of the global model's parameters.
