@@ -217,7 +217,11 @@ class Orchestrator:
         for sd, num_samples in updates:
             weight = num_samples / total_samples
             for k in new_global_sd.keys():
-                new_global_sd[k] += sd[k] * weight
+                if new_global_sd[k].dtype.is_floating_point:
+                    new_global_sd[k] += sd[k].to(new_global_sd[k].dtype) * weight
+                else:
+                    # For non-float tensors like num_batches_tracked, just copy one client’s value
+                    new_global_sd[k] = sd[k]
 
         global_model.load_state_dict(new_global_sd) # Replace the old global model parameters with the newly averaged ones
         return global_model

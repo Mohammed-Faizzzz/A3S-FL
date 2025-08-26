@@ -120,6 +120,7 @@ class Orchestrator:
             if not payload:
                 print(f"[orchestrator] {name} error: empty payload")
                 continue
+            print(f"[orchestrator] Raw client result from {name}: {result.content}")
 
             try:
                 data = json.loads(payload) if isinstance(payload, str) else payload
