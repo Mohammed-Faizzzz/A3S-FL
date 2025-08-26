@@ -104,13 +104,19 @@ async def train_model_with_local_data(global_model_params: str, epochs: int = 1)
     """
     Performs federated learning on a client with a non-IID subset of the
     CIFAR-100 dataset.
-    total_samples: 3568,
-    top classes: dolphin (14.0%), otter (14.0%), tractor (14.0%), woman (14.0%), seal (13.8%),
-    num_unique_classes: 12,
-    class_skewness_std_dev: 227.70,
-    class_distribution:
-    {0: 2, 13: 21, 15: 455, 25: 11, 30: 499, 38: 92,
-    50: 477, 55: 499, 72: 493, 80: 21, 89: 499, 98: 499}
+    Total Samples: 4642
+    Top classes: bowl (6.6%), lobster (5.3%), dinosaur (5.2%), fox (4.4%), tulip (3.7%)
+    Number of Unique Classes: 95
+    Class Skewness (Std Dev): 56.87
+    Class Distribution: {0: 116, 1: 72, 2: 2, 3: 41, 4: 16, 5: 56, 6: 27, 7: 27, 8: 97, 9: 9,
+    10: 305, 12: 18, 13: 78, 14: 11, 15: 22, 16: 2, 17: 26, 19: 20, 20: 73, 21: 13, 22: 33,
+    24: 71, 25: 125, 26: 21, 27: 33, 28: 21, 29: 242, 30: 57, 31: 28, 32: 2, 33: 4, 34: 202,
+    35: 61, 36: 8, 37: 22, 38: 2, 39: 9, 40: 107, 41: 65, 42: 56, 43: 6, 44: 29, 45: 247,
+    46: 3, 47: 130, 48: 63, 49: 43, 50: 3, 51: 10, 52: 2, 53: 121, 54: 120, 55: 50, 56: 56,
+    57: 26, 58: 106, 59: 11, 60: 16, 61: 45, 62: 6, 63: 12, 64: 46, 65: 112, 66: 41, 67: 31,
+    68: 20, 69: 2, 70: 3, 71: 26, 72: 12, 73: 14, 74: 20, 75: 74, 76: 54, 77: 64, 78: 20,
+    80: 48, 81: 7, 82: 8, 83: 14, 84: 34, 85: 9, 86: 19, 87: 58, 88: 17, 89: 64, 90: 3,
+    91: 62, 92: 172, 94: 42, 95: 25, 96: 9, 97: 164, 98: 42, 99: 1}
     
     Args:
         global_model_params: A dictionary of the global model's parameters.

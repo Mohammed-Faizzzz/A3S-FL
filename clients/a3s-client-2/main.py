@@ -102,15 +102,19 @@ def _train_model_locally(model_params: Dict[str, torch.Tensor], dataloader: Data
 @mcp.tool()
 async def train_model_with_local_data(global_model_params: str, epochs: int = 1) -> Dict[str, Any]:
     """
-    Performs federated learning on a client with a non-IID subset of the
-    CIFAR-100 dataset.
-    total_samples: 3139,
-    top classes: house (15.9%), television (15.9%), tulip (15.9%), skyscraper (15.8%), sunflower (15.8%),
-    num_unique_classes: 9,
-    class_skewness_std_dev: 197.89,
-    class_distribution:
-    {2: 28, 37: 499, 45: 402, 72: 6, 76: 496,
-    82: 496, 86: 214, 87: 499, 92: 499}
+    Total Samples: 5160
+    Top classes: shark (7.5%), crocodile (4.7%), trout (4.7%), turtle (4.5%), cattle (4.2%)
+    Number of Unique Classes: 85
+    Class Skewness (Std Dev): 71.01
+    Class Distribution: {0: 97, 1: 27, 2: 1, 3: 36, 4: 20, 5: 127, 6: 21, 7: 27, 9: 27,
+    11: 10, 12: 74, 13: 7, 14: 161, 15: 110, 16: 60, 17: 165, 18: 49, 19: 218, 20: 6,
+    21: 32, 26: 57, 27: 244, 28: 24, 29: 12, 30: 39, 31: 10, 32: 19, 33: 168, 34: 88,
+    35: 111, 36: 110, 37: 20, 38: 17, 39: 66, 40: 17, 41: 61, 42: 5, 45: 16, 46: 125,
+    47: 6, 48: 2, 49: 51, 50: 106, 51: 34, 52: 20, 53: 7, 54: 13, 55: 1, 56: 162, 57: 74,
+    58: 25, 59: 69, 60: 2, 61: 11, 62: 32, 63: 18, 64: 20, 65: 59, 66: 4, 68: 200, 69: 10,
+    70: 5, 71: 4, 72: 72, 73: 385, 74: 61, 75: 95, 76: 5, 77: 12, 78: 58, 79: 1, 81: 115,
+    82: 56, 83: 1, 84: 93, 85: 31, 86: 6, 87: 2, 88: 157, 89: 54, 91: 241, 93: 231, 94: 3,
+    98: 11, 99: 51}    
     
     Args:
         global_model_params: A dictionary of the global model's parameters.
