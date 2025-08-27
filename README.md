@@ -35,3 +35,27 @@ This architecture provides significant advantages over a standard federated lear
 * **Targeted Client Engagement:** By leveraging the MCP's descriptive capabilities, the agent can strategically select clients. This makes training more efficient and can help address model biases more effectively than random sampling.
 * **Enhanced Security and Privacy:** The MCP ensures that all communication is standardized and secure, reinforcing the core privacy-preserving tenet of federated learning.
 * **Improved Diagnosability:** The agent's decision-making process can be logged and audited. This transparency allows us to understand **why** certain clients were chosen or why a specific training path was taken, addressing potential "black box" concerns.
+
+---
+
+### 4. Set Up
+ 1. First, install uv and set up our Python project and environment:
+    ```
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    ```
+
+ 2. Then, load the dependencies using the following command:
+     ```
+     uv sync
+     ```
+    You should have gotten a `uv.lock` file now.
+
+ 3. In the `./data` folder, you will see a `dirichlet0.5_client10.json` file. Replace it with your preferred data after splitting. (Will potentially replace this with a python script to perform the split ourselves.)
+
+ 4. Run the `data_processing.py` script. This will convert the data into `.pt` files for access by the client. We use `.pt` files over `.npz` files as `.npz` files incur additional time overhead from unzipping at each iteration. This will also generate `global_test_dataset.pt`, the test dataset that we will use for testing the accuracy of our global model after each round. Finally, it will also generate `client_metadata.json`. This file contains semantic data about the different data splits assigned to the various clients. We will be using this semantic data to modify our MCP tool's descriptions dynamically. This is important as AI Agents will be using the semantic data to make informed decisions on which clients to use at the various rounds.
+
+ 5. From the root of the folder, run the following command:
+    ```
+    uv run server/server.py
+    ```
+    This will launch the FedAvg training script, which in turn will spawn MCP tools dynamically. The number of MCP tools to spawn can be modified in this script.
