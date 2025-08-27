@@ -59,3 +59,38 @@ This architecture provides significant advantages over a standard federated lear
     uv run server/server.py
     ```
     This will launch the FedAvg training script, which in turn will spawn MCP tools dynamically. The number of MCP tools to spawn can be modified in this script.
+
+### 5. Key Components
+This project is organized into the following main pieces:
+
+#### **`data/`**
+- data_processing.py: converts raw JSON splits into .pt files, generates: global_test_dataset.pt, and produces client_metadata.json.
+- dirichlet0.5_client10.json: JSON file describing the initial dataset partition (e.g. 10 clients with Dirichlet α=0.5).
+
+- client_*.pt: preprocessed dataset shards, one per client.
+
+- global_test_dataset.pt: held-out global test dataset for evaluating the aggregated model.
+
+- client_metadata.json: semantic metadata about each client’s shard (sample counts, class distribution, top classes). Used to generate dynamic MCP tool descriptions.
+
+#### **`models/`**
+
+- cnn_model.py: the CNN architecture trained locally by each client and aggregated globally.
+
+#### **`clients/`**
+- main.py: the MCP client. A reusable code that takes in various arguments to build the unique MCP tool.
+    - Loads the client’s dataset shard.
+    - Exposes the train_model_with_local_data tool, with a description dynamically generated from client_metadata.json.
+    - Handles local training and returns updated weights.
+
+- `logs/` – per-client logs of training progress.
+
+#### **`server/`**
+- server.py: the orchestrator.
+    - Spawns MCP clients as subprocesses.
+    - Calls their tools to perform local training.
+    - Aggregates weights with FedAvg.
+    - Evaluates the global model on the test set after each round.
+
+#### **Root Scripts**
+- uv.lock / pyproject.toml: dependency management via uv
