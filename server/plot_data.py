@@ -3,9 +3,9 @@ import matplotlib.pyplot as plt
 
 methods = {
     "FedAvg": "results/fedavg.npy",
-    "Agent Select": "results/agent_select.npy",
-    "Agent Weight": "results/agent_weight.npy",
-    "Perf Weight": "results/perf_weight.npy",
+    # "Agent Select": "results/agent_select.npy",
+    # "Agent Weight": "results/agent_weight.npy",
+    # "Perf Weight": "results/perf_weight.npy",
 }
 
 plt.figure(figsize=(10,6))

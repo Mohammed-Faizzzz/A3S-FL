@@ -50,10 +50,25 @@ class MyDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         return self.tensors[idx], self.labels[idx]
 
+# def _load_local_dataloader(batch_size=32):
+#     data = torch.load(LOCAL_DATA_PATH)  # loads preprocessed .pt file
+#     dataset = MyDataset(data["x"], data["y"])
+#     return DataLoader(dataset, batch_size=batch_size, shuffle=False)
+
 def _load_local_dataloader(batch_size=32):
     data = torch.load(LOCAL_DATA_PATH)  # loads preprocessed .pt file
     dataset = MyDataset(data["x"], data["y"])
-    return DataLoader(dataset, batch_size=batch_size, shuffle=False)
+
+    # === Debug checks ===
+    x_sample = data["x"].float()
+    y_sample = data["y"]
+
+    logger.info(f"[Data Check] Tensor shape: {x_sample.shape}, Labels shape: {y_sample.shape}")
+    logger.info(f"[Data Check] Value range: min={x_sample.min().item():.4f}, max={x_sample.max().item():.4f}")
+    logger.info(f"[Data Check] Mean={x_sample.mean().item():.4f}, Std={x_sample.std().item():.4f}")
+    logger.info(f"[Data Check] Labels unique: {torch.unique(y_sample)[:10].tolist()}... total {len(torch.unique(y_sample))} classes")
+
+    return DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
 def _state_dict_to_b64(sd: Dict[str, torch.Tensor]) -> str:
     buf = io.BytesIO()
@@ -96,6 +111,7 @@ def _train_model_locally(model_params: Dict[str, torch.Tensor], dataloader: Data
             images, labels = images.to(device), labels.to(device)
             optimizer.zero_grad()
             outputs = model(images)
+            # logger.info(f"Logits mean={outputs.mean().item():.4f}, std={outputs.std().item():.4f}")
             loss = loss_fn(outputs, labels)
             loss.backward()
             optimizer.step()

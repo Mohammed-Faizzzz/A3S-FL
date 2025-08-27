@@ -52,7 +52,7 @@ class MyDataset(torch.utils.data.Dataset):
 def _load_local_dataloader(batch_size=32):
     data = torch.load(LOCAL_DATA_PATH)  # loads preprocessed .pt file
     dataset = MyDataset(data["x"], data["y"])
-    return DataLoader(dataset, batch_size=batch_size, shuffle=False)
+    return DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
 def _state_dict_to_b64(sd: Dict[str, torch.Tensor]) -> str:
     buf = io.BytesIO()
