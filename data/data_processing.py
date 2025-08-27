@@ -6,7 +6,7 @@ import numpy as np
 
 # ===== Config =====
 JSON_SPLIT_FILE = "dirichlet0.5_clients10.json"
-SAVE_DIR = "./data"              # output directory
+SAVE_DIR = "./"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 # CIFAR-100 normalization values

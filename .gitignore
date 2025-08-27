@@ -1,2 +1,16 @@
-data/data
+data/client_0.pt
+data/client_1.pt
+data/client_2.pt
+data/client_3.pt
+data/client_4.pt
+data/client_5.pt
+data/client_6.pt
+data/client_7.pt
+data/client_8.pt
+data/client_9.pt
+data/global_test_dataset.pt
+models/__pycache__/
 Faiz.pem
+server/.env
+uv.lock
+.venv/
