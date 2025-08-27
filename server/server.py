@@ -17,19 +17,8 @@ from models.cnn_model import CNN  # your base model
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"[orchestrator] Using device: {DEVICE}")
 
-# Hardcoded client configs
-CLIENTS = [
-    ("a3s-client-0", "clients/a3s-client-0/main.py"),
-    ("a3s-client-1", "clients/a3s-client-1/main.py"),
-    ("a3s-client-2", "clients/a3s-client-2/main.py"),
-    ("a3s-client-3", "clients/a3s-client-3/main.py"),
-    ("a3s-client-4", "clients/a3s-client-4/main.py"),
-    ("a3s-client-5", "clients/a3s-client-5/main.py"),
-    ("a3s-client-6", "clients/a3s-client-6/main.py"),
-    ("a3s-client-7", "clients/a3s-client-7/main.py"),
-    ("a3s-client-8", "clients/a3s-client-8/main.py"),
-    ("a3s-client-9", "clients/a3s-client-9/main.py")
-]
+NUM_CLIENTS = 10
+CLIENTS = [(f"a3s-client-{i}", "clients/main.py", i) for i in range(NUM_CLIENTS)]
 
 UV_CMD = "uv"
 
@@ -79,17 +68,25 @@ class Orchestrator:
         self.sessions: Dict[str, ClientSession] = {}
 
     async def connect_all(self):
-        for name, script in CLIENTS:
+        for name, script, client_id in CLIENTS:
             print(f"[orchestrator] Connecting to {name}...")
 
             client_dir = os.path.abspath(os.path.join(ROOT, script.rsplit("/", 1)[0]))
             client_script = script.rsplit("/", 1)[1]
+            print(f"[orchestrator] Client directory: {client_dir}")
+            print(f"[orchestrator] Client script: {client_script}")
+            print(f"[orchestrator] Client ID: {client_id}")
 
             params = StdioServerParameters(
                 command=UV_CMD,
-                args=["--directory", client_dir, "run", client_script],
+                args=[
+                    "--directory", client_dir,
+                    "run", client_script,
+                    "--client-id", name.split("-")[-1],
+                ],
                 env=None,
             )
+            print(params)
             transport = await self.exit_stack.enter_async_context(stdio_client(params))
             stdio, write = transport
             session = await self.exit_stack.enter_async_context(ClientSession(stdio, write))

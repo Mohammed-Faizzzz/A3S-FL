@@ -1,43 +1,38 @@
+import os, sys, io, base64, logging, argparse
 from typing import Any, Dict
-import httpx
-from mcp.server.fastmcp import FastMCP
-import os
-import sys
-import torch
-import numpy as np
-import torch.nn as nn
-import io, base64
+
+import torch, torch.nn as nn, numpy as np, httpx
 from torch.utils.data import DataLoader, Dataset
 from dotenv import load_dotenv
-import logging
+from mcp.server.fastmcp import FastMCP
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if ROOT not in sys.path: sys.path.insert(0, ROOT)
+# === Parse arguments ===
+parser = argparse.ArgumentParser()
+parser.add_argument("--client-id", type=int, required=True)
+args = parser.parse_args()
 
-# Import the base model architecture
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
 from models.cnn_model import CNN
-mcp = FastMCP("a3s-client-0")
 
-load_dotenv()
-private_key = os.getenv("PRIVATE_KEY")
-base_url = os.getenv("RESOURCE_SERVER_URL")
-endpoint_path = os.getenv("ENDPOINT_PATH")
+client_name = f"a3s-client-{args.client_id}"
+mcp = FastMCP(client_name)
 
-# --- Internal Data and Training Methods ---
+LOCAL_DATA_PATH = os.path.join(ROOT, "data", f"client_{args.client_id}.pt")
 
-LOCAL_DATA_PATH = os.path.join(ROOT, "data", "client_0.pt")
-
-# Logging: file + stderr (not MCP’s stdio)
-logfile = os.path.join(ROOT, f"{mcp.name}.log")
+# logging per client
+logfile = os.path.join(ROOT, "clients", "logs", f"{client_name}.log")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.FileHandler(logfile, mode="a"),
-        logging.StreamHandler(sys.__stderr__)  # safe to real stderr
+        logging.StreamHandler(sys.__stderr__)
     ]
 )
-logger = logging.getLogger(mcp.name)
+logger = logging.getLogger(client_name)
 
 class MyDataset(torch.utils.data.Dataset):
     def __init__(self, tensors, labels):
@@ -50,23 +45,12 @@ class MyDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         return self.tensors[idx], self.labels[idx]
 
-# def _load_local_dataloader(batch_size=32):
-#     data = torch.load(LOCAL_DATA_PATH)  # loads preprocessed .pt file
-#     dataset = MyDataset(data["x"], data["y"])
-#     return DataLoader(dataset, batch_size=batch_size, shuffle=False)
-
 def _load_local_dataloader(batch_size=32):
-    data = torch.load(LOCAL_DATA_PATH)  # loads preprocessed .pt file
+    data = torch.load(LOCAL_DATA_PATH)
     dataset = MyDataset(data["x"], data["y"])
 
-    # === Debug checks ===
     x_sample = data["x"].float()
     y_sample = data["y"]
-
-    logger.info(f"[Data Check] Tensor shape: {x_sample.shape}, Labels shape: {y_sample.shape}")
-    logger.info(f"[Data Check] Value range: min={x_sample.min().item():.4f}, max={x_sample.max().item():.4f}")
-    logger.info(f"[Data Check] Mean={x_sample.mean().item():.4f}, Std={x_sample.std().item():.4f}")
-    logger.info(f"[Data Check] Labels unique: {torch.unique(y_sample)[:10].tolist()}... total {len(torch.unique(y_sample))} classes")
 
     return DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
@@ -78,17 +62,14 @@ def _state_dict_to_b64(sd: Dict[str, torch.Tensor]) -> str:
     )
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
-
 def _b64_to_state_dict(b64: str) -> Dict[str, torch.Tensor]:
     raw = base64.b64decode(b64.encode("ascii"))
     buf = io.BytesIO(raw)
     sd = torch.load(buf, map_location="cpu")
-    # cast back to float32 so training is unaffected
     for k, v in sd.items():
         if v.dtype == torch.float16:
             sd[k] = v.float()
     return sd
-
 
 def _train_model_locally(model_params: Dict[str, torch.Tensor], dataloader: DataLoader, epochs: int = 10) -> Dict[str, torch.Tensor]:
     """
@@ -111,14 +92,13 @@ def _train_model_locally(model_params: Dict[str, torch.Tensor], dataloader: Data
             images, labels = images.to(device), labels.to(device)
             optimizer.zero_grad()
             outputs = model(images)
-            # logger.info(f"Logits mean={outputs.mean().item():.4f}, std={outputs.std().item():.4f}")
             loss = loss_fn(outputs, labels)
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
         logger.info(f"Epoch {epoch+1}/{epochs}, loss={running_loss/len(dataloader):.4f}")
 
-    logger.info(f"Client {mcp.name} finished local training for {epochs} epochs.")
+    logger.info(f"Client {client_name} finished local training for {epochs} epochs.")
     return model.state_dict()
 
 @mcp.tool()
@@ -140,7 +120,6 @@ async def train_model_with_local_data(global_model_params: str, epochs: int = 1)
     """
     try:
         local_dataloader = _load_local_dataloader()
-        # decode incoming params (base64 -> state_dict)
         global_sd = _b64_to_state_dict(global_model_params)
         updated_sd = _train_model_locally(global_sd, local_dataloader, epochs)
         logger.info(f"Returning {len(updated_sd)} params and {len(local_dataloader.dataset)} samples")
@@ -150,9 +129,10 @@ async def train_model_with_local_data(global_model_params: str, epochs: int = 1)
         }
 
     except Exception as e:
-        logger.exception(f"Exception in {mcp.name}")
+        logger.exception(f"Exception in {client_name}")
         return {"error": str(e)}
 
 if __name__ == "__main__":
-    logger.info(f"Starting MCP server for {mcp.name}...")
+    logger.info(f"Starting MCP server for {client_name}...")
     mcp.run(transport='stdio')
+    
