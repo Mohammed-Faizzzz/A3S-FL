@@ -1,4 +1,4 @@
-import os, sys, io, base64, logging, argparse
+import os, sys, io, base64, logging, argparse, json
 from typing import Any, Dict
 
 import torch, torch.nn as nn, numpy as np, httpx
@@ -21,6 +21,20 @@ client_name = f"a3s-client-{args.client_id}"
 mcp = FastMCP(client_name)
 
 LOCAL_DATA_PATH = os.path.join(ROOT, "data", f"client_{args.client_id}.pt")
+
+with open(os.path.join(ROOT, "data", "client_metadata.json")) as f:
+    CLIENT_DESCRIPTIONS = json.load(f)
+    
+stats = CLIENT_DESCRIPTIONS.get(str(args.client_id))
+if stats:
+    description = (
+        f"Train on client {args.client_id}'s CIFAR-100 shard. "
+        f"Samples: {stats['total_samples']}, "
+        f"Unique classes: {stats['unique_classes']}, "
+        f"Top classes: {', '.join(stats['top_classes'])}."
+    )
+else:
+    description = f"Train on client {args.client_id}'s dataset shard."
 
 # logging per client
 logfile = os.path.join(ROOT, "clients", "logs", f"{client_name}.log")
@@ -100,23 +114,11 @@ def _train_model_locally(model_params: Dict[str, torch.Tensor], dataloader: Data
     logger.info(f"Client {client_name} finished local training for {epochs} epochs.")
     return model.state_dict()
 
-@mcp.tool()
+@mcp.tool(
+    name="train_model_with_local_data",
+    description=description
+)
 async def train_model_with_local_data(global_model_params: str, epochs: int = 10) -> Dict[str, Any]:
-    """
-    Performs federated learning on a client with a non-IID subset of the
-    CIFAR-100 dataset.
-    Samples: 6387
-    Unique classes: 87
-    Class distribution: {0: 51, 1: 41, 2: 277, 4: 41, 5: 264, 6: 5, 7: 41, 8: 35, 9: 59, 10: 49, 11: 44, 12: 6, 13: 141, 14: 1, 16: 16, 17: 57, 18: 5, 19: 9, 20: 56, 21: 10, 22: 3, 23: 60, 24: 4, 25: 194, 26: 34, 27: 5, 28: 26, 29: 4, 30: 60, 31: 11, 32: 103, 33: 30, 34: 16, 36: 26, 37: 72, 39: 2, 40: 185, 44: 3, 45: 197, 46: 1, 47: 96, 49: 14, 50: 168, 51: 42, 52: 92, 53: 306, 54: 7, 55: 139, 56: 19, 57: 3, 58: 159, 59: 21, 60: 12, 61: 20, 62: 172, 63: 8, 65: 11, 66: 126, 67: 14, 68: 376, 69: 48, 70: 3, 72: 37, 74: 136, 75: 51, 76: 33, 77: 13, 78: 6, 80: 114, 81: 9, 82: 84, 83: 245, 84: 114, 85: 234, 86: 12, 87: 24, 88: 171, 89: 195, 90: 97, 91: 76, 92: 172, 93: 83, 95: 108, 96: 112, 97: 91, 98: 6, 99: 64}
-    Top classes: road (5.9%), orange (4.8%), baby (4.3%), bed (4.1%), sweet_pepper (3.8%)
-    
-    Args:
-        global_model_params: A dictionary of the global model's parameters.
-        epochs: The number of local training epochs.
-    
-    Returns:
-        A dictionary of the locally trained model's updated parameters.
-    """
     try:
         local_dataloader = _load_local_dataloader()
         global_sd = _b64_to_state_dict(global_model_params)

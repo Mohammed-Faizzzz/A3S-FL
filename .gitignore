@@ -14,3 +14,4 @@ Faiz.pem
 server/.env
 uv.lock
 .venv/
+clients/logs
