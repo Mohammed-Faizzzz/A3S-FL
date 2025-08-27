@@ -172,7 +172,7 @@ async def main(save_path: str):
         ROUNDS = 100
         for r in range(ROUNDS):
             print(f"\n[orchestrator] ===== Round {r+1} =====")
-            global_model = await orch.train_round(global_model, epochs=1)
+            global_model = await orch.train_round(global_model, epochs=10)
             
             acc = evaluate(global_model, test_loader)
             accuracies.append(acc)

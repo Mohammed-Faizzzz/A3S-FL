@@ -77,7 +77,6 @@ def _train_model_locally(model_params: Dict[str, torch.Tensor], dataloader: Data
     """
     model = CNN()
     model.load_state_dict(model_params)
-    epochs = 3
     
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model.to(device)
@@ -102,7 +101,7 @@ def _train_model_locally(model_params: Dict[str, torch.Tensor], dataloader: Data
     return model.state_dict()
 
 @mcp.tool()
-async def train_model_with_local_data(global_model_params: str, epochs: int = 1) -> Dict[str, Any]:
+async def train_model_with_local_data(global_model_params: str, epochs: int = 10) -> Dict[str, Any]:
     """
     Performs federated learning on a client with a non-IID subset of the
     CIFAR-100 dataset.
