@@ -102,7 +102,8 @@ class Orchestrator:
         self.user_goal = user_goal
         self.knob_history: Dict[str, List[Dict[str, float]]] = {} # keep track of knob values
         self.accuracy_history: List[float] = [] # so claude can see how well localknobs worked
-    
+        self.server_knob_history: List[Dict[str, float]] = [] # keep track of server knob values
+
     async def connect_all(self):
         """
         Connect to all client sessions, a handshake and get all the info about the various tools.
@@ -166,46 +167,62 @@ class Orchestrator:
                 {
                     "role": "user",
                     "content": f"""
-    You are coordinating a federated learning training round.
+        You are coordinating a federated learning training round.
 
-    User goal: {self.user_goal}
-    Round: {round_num}
+        User goal: {self.user_goal}
+        Round: {round_num}
 
-    The following clients and their tools are available:
-    {tool_info_json}
-    
-    Previous knob settings (by client, most recent last):
-    {history_json}
-    
-    Recent global test accuracies:
-    {acc_history_json}
+        Previous server knob settings (most recent last):
+        {json.dumps(self.server_knob_history, indent=2)}
 
-    For each selected client, output JSON ONLY in the format:
-    [
+        Previous local knob settings (by client, most recent last):
+        {history_json}
+
+        Recent global test accuracies:
+        {acc_history_json}
+
+        Return ONLY valid JSON in the following format:
         {{
+        "server_knobs": {{
+            "eta_ref": 1.0,
+            "use_diag_precond": false,
+            "alpha_sca": 0.0,
+            "xi": 0.0,
+            "xi_sca_client": 0.0,
+            "beta_obc": 0.0,
+            "nu_obc": 0.0,
+            "tau_agg": 0.0
+        }},
+        "clients": [
+            {{
             "client": "a3s-client-0",
             "tool": "train_model_with_local_data",
             "epochs": 5,
             "knobs": {{
-            "use_LB": true,
-            "lambda_prior": 0.7,
-            "alpha_parallel": 0.3,
-            "alpha_perp": 1.5,
-            "rho": 0.5,
-            "gamma_perp": 0.3
+                "use_LB": true,
+                "lambda_prior": 0.7,
+                "alpha_parallel": 0.3,
+                "alpha_perp": 1.5,
+                "rho": 0.5,
+                "gamma_perp": 0.3
             }}
+            }}
+        ]
         }}
-    ]
-    """
+        """
                 }
             ],
         )
+
 
         try:
             raw = msg.content[0].text
             print("[orchestrator] Claude response raw:", raw)
             plan = json.loads(raw)
-            print("[orchestrator] Claude response plan:", plan) # CHECK THIS AND SEE WHAT OUTPUT YOU GET
+            server_knobs = ServerKnobs.from_dict(plan["server_knobs"], ServerKnobs().to_dict())
+            self.server_knob_history.setdefault(client, []).append(server_knobs.to_dict())
+            clients_plan = plan["clients"]
+            print("[orchestrator] Claude response plan:", clients_plan) # CHECK THIS AND SEE WHAT OUTPUT YOU GET
         except Exception as e:
             print(f"[orchestrator] Claude response parse error: {e}")
             return global_model
@@ -218,7 +235,7 @@ class Orchestrator:
         # 5. Builds a list of updates for federated averaging
 
         updates: List[Tuple[Dict[str, torch.Tensor], int]] = []
-        for action in plan:
+        for action in clients_plan:
             client = action["client"]
             tool = action.get("tool", "train_model_with_local_data")  # default fallback
             local_epochs = action.get("epochs", epochs)
@@ -274,12 +291,43 @@ class Orchestrator:
         for sd, num_samples in updates:
             weight = num_samples / total_samples
             for k in new_global_sd.keys():
-                if new_global_sd[k].dtype.is_floating_point:
-                    new_global_sd[k] += sd[k].to(new_global_sd[k].dtype) * weight
-                else:
-                    # For non-float tensors like num_batches_tracked, just copy one client’s value
-                    new_global_sd[k] = sd[k]
+                v = sd[k].to(new_global_sd[k].dtype)
 
+                if new_global_sd[k].dtype.is_floating_point:
+                    # === 1) eta_ref: scales the global aggregation step ===
+                    update = server_knobs.eta_ref * weight * v
+
+                    # === 2) tau_agg: clipping threshold for robustness ===
+                    if server_knobs.tau_agg > 0:
+                        update = torch.clamp(update, -server_knobs.tau_agg, server_knobs.tau_agg)
+
+                    # === 3) alpha_sca: global scaling factor ===
+                    update = update * (1.0 + server_knobs.alpha_sca)
+
+                    # === 4) xi, xi_sca_client: perturbation scaling (stability knobs) ===
+                    if server_knobs.xi > 0:
+                        noise = torch.randn_like(update) * server_knobs.xi
+                        update = update + noise
+                    if server_knobs.xi_sca_client > 0:
+                        update = update * (1.0 + server_knobs.xi_sca_client)
+
+                    # === 5) beta_obc, nu_obc: oblique corrections (dampen updates) ===
+                    if server_knobs.beta_obc > 0:
+                        update = update * (1.0 - server_knobs.beta_obc)
+                    if server_knobs.nu_obc > 0:
+                        update = update / (1.0 + server_knobs.nu_obc)
+
+                    # === 6) use_diag_precond: element-wise preconditioner ===
+                    if server_knobs.use_diag_precond:
+                        precond = torch.ones_like(update) * 0.9  # placeholder, could be per-parameter diag stats
+                        update = update * precond
+
+                    # Accumulate
+                    new_global_sd[k] += update
+                else:
+                    # Non-float params (e.g. batchnorm counters) just take one client’s value
+                    new_global_sd[k] = v
+                    
         global_model.load_state_dict(new_global_sd) # Replace the old global model parameters with the newly averaged ones
         return global_model
 
