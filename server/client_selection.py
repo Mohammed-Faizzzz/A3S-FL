@@ -10,6 +10,7 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 from torch.utils.data import TensorDataset, DataLoader
 import numpy as np
+from dataclasses import dataclass
 
 # Load environment variables
 load_dotenv()
@@ -17,31 +18,57 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 print(ANTHROPIC_API_KEY)
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT not in sys.path: sys.path.insert(0, ROOT)
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
 
-# Import the base model architecture
 from models.cnn_model import CNN
 
-# Hardcoded client configs
-CLIENTS = [
-    ("a3s-client-0", "clients/a3s-client-0/main.py"),
-    ("a3s-client-1", "clients/a3s-client-1/main.py"),
-    ("a3s-client-2", "clients/a3s-client-2/main.py"),
-    ("a3s-client-3", "clients/a3s-client-3/main.py"),
-    ("a3s-client-4", "clients/a3s-client-4/main.py"),
-    ("a3s-client-5", "clients/a3s-client-5/main.py"),
-    ("a3s-client-6", "clients/a3s-client-6/main.py"),
-    ("a3s-client-7", "clients/a3s-client-7/main.py"),
-    ("a3s-client-8", "clients/a3s-client-8/main.py"),
-    ("a3s-client-9", "clients/a3s-client-9/main.py")
-]
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"[orchestrator] Using device: {DEVICE}")
 
+NUM_CLIENTS = 10
+CLIENTS = [(f"a3s-client-{i}", "clients/main.py", i) for i in range(NUM_CLIENTS)]
 UV_CMD = "uv"
 anthropic = Anthropic()
 
 test_data = torch.load("./../data/global_test_dataset.pt")
 test_dataset = TensorDataset(test_data["x"], test_data["y"])
 test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False)
+
+# === Knob classes ===
+@dataclass
+class LocalKnobs:
+    use_LB: bool = False
+    lambda_prior: float = 0.0
+    alpha_parallel: float = 0.1
+    alpha_perp: float = 0.2
+    rho: float = 0.0
+    gamma_perp: float = 0.8
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "LocalKnobs":
+        return cls(**d)
+
+@dataclass
+class ServerKnobs:
+    eta_ref: float = 1.0
+    use_diag_precond: bool = False
+    alpha_sca: float = 0.0
+    xi: float = 0.0
+    xi_sca_client: float = 0.0
+    beta_obc: float = 0.0
+    nu_obc: float = 0.0
+    tau_agg: float = 0.0
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "ServerKnobs":
+        return cls(**d)
 
 # Functions to help formatting changes between training rounds and MCP
 def state_dict_to_b64(sd: Dict[str, torch.Tensor]) -> str:
@@ -67,13 +94,14 @@ def evaluate(model: CNN, test_loader):
         print(f"[orchestrator] Test Accuracy: {acc:.4f}")
         return acc
 
-
 class Orchestrator:
     def __init__(self, user_goal: str):
         self.exit_stack = AsyncExitStack()
         self.sessions: Dict[str, ClientSession] = {}
         self.tools_by_client: Dict[str, List[Dict[str, str]]] = {} # keep track of tools
         self.user_goal = user_goal
+        self.knob_history: Dict[str, List[Dict[str, float]]] = {} # keep track of knob values
+        self.accuracy_history: List[float] = [] # so claude can see how well localknobs worked
     
     async def connect_all(self):
         """
@@ -119,11 +147,13 @@ class Orchestrator:
         """
         await self.exit_stack.aclose()
 
-    async def train_round(self, global_model: CNN, round_num: int, epochs: int = 5) -> CNN:
+    async def train_round(self, global_model: CNN, round_num: int, epochs: int = 10) -> CNN:
         global_sd_b64 = state_dict_to_b64(global_model.state_dict())
 
         # === Step 1: Ask Claude which clients to use ===
         tool_info_json = json.dumps(self.tools_by_client, indent=2)
+        history_json = json.dumps(self.knob_history, indent=2)
+        acc_history_json = json.dumps(self.accuracy_history, indent=2)
 
         msg = anthropic.messages.create(
             model="claude-3-5-sonnet-20240620",
@@ -139,10 +169,29 @@ class Orchestrator:
 
     The following clients and their tools are available:
     {tool_info_json}
+    
+    Previous knob settings (by client, most recent last):
+    {history_json}
+    
+    "Recent global test accuracies:\n" + acc_history_json + "\n\n"
 
-    Choose the most relevant clients and specify how many epochs to train.
-    Respond ONLY in JSON with a list of objects like:
-    [{{"client": "a3s-client-0", "tool": "train_model_with_local_data", "epochs": 5}}, ...]
+    For each selected client, output JSON ONLY in the format:
+    [
+        {{
+            "client": "a3s-client-0",
+            "tool": "train_model_with_local_data",
+            "epochs": 5,
+            "knobs": {{
+            "use_LB": true,
+            "lambda_prior": 0.7,
+            "alpha_parallel": 0.3,
+            "alpha_perp": 1.5,
+            "rho": 0.5,
+            "gamma_perp": 0.3
+            }}
+        }},
+        ...
+    ]
     """
                 }
             ],
@@ -167,6 +216,9 @@ class Orchestrator:
             client = action["client"]
             tool = action.get("tool", "train_model_with_local_data")  # default fallback
             local_epochs = action.get("epochs", epochs)
+            knob_dict = action.get("knobs", {})
+            self.knob_history.setdefault(client, []).append(knob_dict)
+            local_knobs = LocalKnobs.from_dict(knob_dict)
 
             if client not in self.sessions:
                 print(f"[orchestrator] Unknown client {client}")
@@ -175,7 +227,11 @@ class Orchestrator:
             print(f"[orchestrator] Sending model to {client} with tool {tool}...")
             result = await self.sessions[client].call_tool(
                 tool,
-                {"global_model_params": global_sd_b64, "epochs": local_epochs}
+                {
+                    "global_model_params": global_sd_b64,
+                    "epochs": local_epochs,
+                    "knobs": local_knobs.to_dict() # pass it
+                },
             )
 
             if not result or not getattr(result, "content", None):
@@ -210,10 +266,6 @@ class Orchestrator:
         new_global_sd = {k: torch.zeros_like(v) for k, v in global_model.state_dict().items()} 
         total_samples = sum(num for _, num in updates) # Count how many training samples across all clients (so we can weight their updates properly)
         
-        # For each client:
-        #     Compute its weight (fraction of total samples)
-        #     Add its model parameters into the global average, scaled by that weight
-        #     This way, larger datasets influence the global model more than smaller ones
         for sd, num_samples in updates:
             weight = num_samples / total_samples
             for k in new_global_sd.keys():
@@ -237,17 +289,18 @@ async def main(user_goal: str, save_path: str):
         ROUNDS = 100
         for r in range(ROUNDS):
             print(f"\n[orchestrator] ===== Round {r+1} =====")
-            global_model = await orch.train_round(global_model, round_num=r+1, epochs=1)
-            torch.save(global_model.state_dict(), f"global_model_round_cs.pth")
+            global_model = await orch.train_round(global_model, round_num=r+1, epochs=10)
             
             acc = evaluate(global_model, test_loader)
             accuracies.append(acc)
+            orch.accuracy_history.append(acc)
 
             print(f"[orchestrator] Saved global model after round {r+1}")
 
         # Save results for plotting
         np.save(save_path, np.array(accuracies))
         print(f"[orchestrator] Accuracies saved to {save_path}")
+        torch.save(global_model.state_dict(), f"global_model_round_cs.pth")
 
     finally:
         await orch.close()

@@ -1,10 +1,24 @@
 import os, sys, io, base64, logging, argparse, json
 from typing import Any, Dict
 
+from dataclasses import dataclass
 import torch, torch.nn as nn, numpy as np, httpx
 from torch.utils.data import DataLoader, Dataset
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
+
+@dataclass
+class LocalKnobs:
+    use_LB: bool = False
+    lambda_prior: float = 0.0
+    alpha_parallel: float = 0.1
+    alpha_perp: float = 0.2
+    rho: float = 0.0
+    gamma_perp: float = 0.8
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "LocalKnobs":
+        return cls(**d)
 
 # === Parse arguments ===
 parser = argparse.ArgumentParser()
@@ -85,19 +99,41 @@ def _b64_to_state_dict(b64: str) -> Dict[str, torch.Tensor]:
             sd[k] = v.float()
     return sd
 
-def _train_model_locally(model_params: Dict[str, torch.Tensor], dataloader: DataLoader, epochs: int = 10) -> Dict[str, torch.Tensor]:
+def _train_model_locally(
+    model_params: Dict[str, torch.Tensor],
+    dataloader: DataLoader,
+    epochs: int = 10,
+    knobs: LocalKnobs = LocalKnobs()
+) -> Dict[str, torch.Tensor]:
     """
     Internal training logic for a single client.
+    All LocalKnobs parameters are used.
     """
     model = CNN()
     model.load_state_dict(model_params)
-    
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model.to(device)
-    
+
     loss_fn = nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
-    
+
+    # === Use knobs for optimizer ===
+    # scale learning rate by (1 - lambda_prior), clip at min 1e-4
+    base_lr = 0.01
+    lr = max(1e-4, base_lr * (1.0 - 0.5 * knobs.lambda_prior))
+
+    # momentum from rho (capped at [0,1])
+    momentum = min(max(knobs.rho, 0.0), 0.99)
+
+    optimizer = torch.optim.SGD(
+        model.parameters(),
+        lr=lr,
+        momentum=momentum,
+        weight_decay=1e-4 * knobs.alpha_parallel,  # L2 scaled by alpha_parallel
+    )
+
+    logger.info(f"[{client_name}] Training with knobs={knobs}")
+
     model.train()
     for epoch in range(epochs):
         running_loss = 0.0
@@ -106,10 +142,23 @@ def _train_model_locally(model_params: Dict[str, torch.Tensor], dataloader: Data
             optimizer.zero_grad()
             outputs = model(images)
             loss = loss_fn(outputs, labels)
+
+            # === Use knobs in loss ===
+            # extra regularization if LB is enabled
+            if knobs.use_LB:
+                reg = sum(torch.norm(p) for p in model.parameters())
+                loss += knobs.lambda_prior * 1e-4 * reg
+
+            # scale loss perpendicular vs parallel
+            loss = loss * (1.0 + knobs.alpha_perp) * (1.0 - 0.5 * knobs.gamma_perp)
+
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
-        logger.info(f"Epoch {epoch+1}/{epochs}, loss={running_loss/len(dataloader):.4f}")
+
+        logger.info(
+            f"Epoch {epoch+1}/{epochs}, loss={running_loss/len(dataloader):.4f}"
+        )
 
     logger.info(f"Client {client_name} finished local training for {epochs} epochs.")
     return model.state_dict()
@@ -118,12 +167,22 @@ def _train_model_locally(model_params: Dict[str, torch.Tensor], dataloader: Data
     name="train_model_with_local_data",
     description=description
 )
-async def train_model_with_local_data(global_model_params: str, epochs: int = 10) -> Dict[str, Any]:
+async def train_model_with_local_data(
+    global_model_params: str,
+    epochs: int = 10,
+    knobs: Dict[str, Any] = None
+) -> Dict[str, Any]:
     try:
         local_dataloader = _load_local_dataloader()
         global_sd = _b64_to_state_dict(global_model_params)
-        updated_sd = _train_model_locally(global_sd, local_dataloader, epochs)
-        logger.info(f"Returning {len(updated_sd)} params and {len(local_dataloader.dataset)} samples")
+        # if not LocalKnobs, instantiate default
+        local_knobs = LocalKnobs() if not knobs else LocalKnobs.from_dict(knobs)
+
+        updated_sd = _train_model_locally(global_sd, local_dataloader, epochs, local_knobs)
+
+        logger.info(
+            f"Returning {len(updated_sd)} params and {len(local_dataloader.dataset)} samples"
+        )
         return {
             "params_b64": _state_dict_to_b64(updated_sd),
             "num_samples": len(local_dataloader.dataset)
