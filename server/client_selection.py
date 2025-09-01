@@ -1,6 +1,6 @@
 import asyncio
 from contextlib import AsyncExitStack
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Any
 import base64, io, torch
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -10,7 +10,7 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 from torch.utils.data import TensorDataset, DataLoader
 import numpy as np
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 
 # Load environment variables
 load_dotenv()
@@ -107,7 +107,7 @@ class Orchestrator:
         """
         Connect to all client sessions, a handshake and get all the info about the various tools.
         """
-        for name, script in CLIENTS:
+        for name, script, client_id in CLIENTS:
             print(f"[orchestrator] Connecting to {name}...")
 
             client_dir = os.path.abspath(os.path.join(ROOT, script.rsplit("/", 1)[0]))
@@ -127,8 +127,12 @@ class Orchestrator:
 
             params = StdioServerParameters(
                 command=UV_CMD,
-                args=["--directory", client_dir, "run", client_script],
-                env=None
+                args=[
+                    "--directory", client_dir,
+                    "run", client_script,
+                    "--client-id", name.split("-")[-1],
+                ],
+                env=None,
             )
             transport = await self.exit_stack.enter_async_context(stdio_client(params))
             stdio, write = transport
@@ -157,7 +161,7 @@ class Orchestrator:
 
         msg = anthropic.messages.create(
             model="claude-3-5-sonnet-20240620",
-            max_tokens=500,
+            max_tokens=5000,
             messages=[
                 {
                     "role": "user",
@@ -173,7 +177,8 @@ class Orchestrator:
     Previous knob settings (by client, most recent last):
     {history_json}
     
-    "Recent global test accuracies:\n" + acc_history_json + "\n\n"
+    Recent global test accuracies:
+    {acc_history_json}
 
     For each selected client, output JSON ONLY in the format:
     [
@@ -189,8 +194,7 @@ class Orchestrator:
             "rho": 0.5,
             "gamma_perp": 0.3
             }}
-        }},
-        ...
+        }}
     ]
     """
                 }
@@ -198,7 +202,9 @@ class Orchestrator:
         )
 
         try:
-            plan = json.loads(msg.content[0].text)
+            raw = msg.content[0].text
+            print("[orchestrator] Claude response raw:", raw)
+            plan = json.loads(raw)
             print("[orchestrator] Claude response plan:", plan) # CHECK THIS AND SEE WHAT OUTPUT YOU GET
         except Exception as e:
             print(f"[orchestrator] Claude response parse error: {e}")
@@ -216,9 +222,8 @@ class Orchestrator:
             client = action["client"]
             tool = action.get("tool", "train_model_with_local_data")  # default fallback
             local_epochs = action.get("epochs", epochs)
-            knob_dict = action.get("knobs", {})
+            knob_dict = action.get("knobs", LocalKnobs().to_dict())  # default to LocalKnobs
             self.knob_history.setdefault(client, []).append(knob_dict)
-            local_knobs = LocalKnobs.from_dict(knob_dict)
 
             if client not in self.sessions:
                 print(f"[orchestrator] Unknown client {client}")
@@ -230,7 +235,7 @@ class Orchestrator:
                 {
                     "global_model_params": global_sd_b64,
                     "epochs": local_epochs,
-                    "knobs": local_knobs.to_dict() # pass it
+                    "knobs": knob_dict
                 },
             )
 

@@ -1,7 +1,7 @@
 import os, sys, io, base64, logging, argparse, json
 from typing import Any, Dict
 
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 import torch, torch.nn as nn, numpy as np, httpx
 from torch.utils.data import DataLoader, Dataset
 from dotenv import load_dotenv
